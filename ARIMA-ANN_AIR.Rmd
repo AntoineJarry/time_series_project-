@@ -1,0 +1,666 @@
+---
+title: "ARIMA-ANN_AIR"
+author: "JARRY Antoine"
+date: "2024-02-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tseries)
+library(forecast)
+library(neuralnet)
+library(caret)
+library(tensorflow)
+library(keras)
+library(tfdatasets)
+library(xts)
+```
+
+# Prepare our Air Quality Data
+
+```{r}
+data <- read.csv("D:/air_pollution.csv")
+str(data)
+data<-data[,1:2]
+
+# Combinez 'date' et 'time' en une seule colonne 'datetime'
+data$date <- as.POSIXct((data$date), format = "%Y-%m-%d")
+
+```
+
+Create time series
+
+```{r}
+
+# Convertir le dataframe en une série temporelle xts
+ts_data <- ts(data$pollution_today)
+plot(ts_data)
+
+```
+
+Finally split the data 
+```{r}
+# Assuming 'your_data' is your time series data
+set.seed(123)  # Set seed for reproducibility
+
+# Specify the percentage of data for training
+train_percentage <- 0.8
+
+# Calculate the index for splitting
+split_index <- floor(NROW(ts_data) * train_percentage)
+
+# Split the time series into training and testing sets
+train_data <- ts_data[1:split_index]
+test_data <- ts_data[(split_index + 1):length(ts_data)]
+
+# Print the training and testing sets
+plot.ts(train_data)
+plot.ts(test_data)
+```
+
+# So now lets make our arima model thanks the function auto.arima()
+
+```{r}
+arima<-auto.arima(train_data,seasonal = FALSE)
+print(arima)
+```
+
+Compare predictions and observations 
+
+```{r}
+predictions_arima <- fitted(arima)
+
+# Créer un graphique comparant les données observées et les données prédites
+plot(train_data, main = "Comparaison des données observées et prédites",
+     xlab = "Date", ylab = "Valeurs observées", col = "blue", ylim = range(c(train_data, predictions_arima)))
+lines(predictions_arima, col = "red", lty = 2)
+legend("topright", legend = c("Observées", "Prédites"), col = c("blue", "red"), lty = c(1, 2))
+
+# Calculer l'erreur de prévision, par exemple, la racine carrée de la moyenne des carrés des écarts
+rmse <- sqrt(mean((train_data - predictions_arima)^2))
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+```
+##SOLO ANN : 
+
+Normalize our data for ANN
+```{r, include=FALSE}
+# We need to normalize our data before use them in ANN 
+
+min_max_scale <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+# Apply Min-Max scaling to your data
+normalized_ann <- min_max_scale(train_data)
+```
+
+Create a generator function because time series need this and batch size for get time on the training memory during the epoch( = training on entire dataset)
+```{r,include=FALSE}
+train0_sequence <- normalized_ann
+train_sequence <- normalized_ann[1:1200]
+val_sequence<- normalized_ann[1201:1460] #Split our train_data in valditaion_data for our model
+
+train0_dataset <- timeseries_dataset_from_array(
+  data = train0_sequence,
+  targets = tail(train0_sequence,-1),
+  sequence_length = 1, # the past 2 timesteps to predict the next timestep
+  batch_size = 146 # size of all our batch
+)
+
+train_dataset <- timeseries_dataset_from_array(
+  data = train_sequence,
+  targets = tail(train_sequence,-1),
+  sequence_length = 1,
+  batch_size = 120
+)
+
+val_dataset <- timeseries_dataset_from_array(
+  data = val_sequence,
+  targets = tail(val_sequence,-1),
+  sequence_length = 1,
+  batch_size = 20
+)
+
+train_dataset_iterator <- as_array_iterator(train_dataset)
+val_dataset_iterator<-as_array_iterator(val_dataset)
+
+repeat {
+  batch <- iter_next(train_dataset_iterator)
+  if (is.null(batch))
+    break
+  c(inputs, targets) %<-% batch
+  for (r in 1:nrow(inputs))
+    cat(sprintf("input: [ %s ] target: %s\n", 
+                paste(inputs[r, ], collapse = " "), targets[r]))
+  cat(strrep("-", 27), "\n")
+}
+
+repeat {
+  batch <- iter_next(val_dataset_iterator)
+  if (is.null(batch))
+    break
+  c(inputs, targets) %<-% batch
+  for (r in 1:nrow(inputs))
+    cat(sprintf("input: [ %s ] target: %s\n", 
+                paste(inputs[r, ], collapse = " "), targets[r]))
+  cat(strrep("-", 27), "\n")
+}
+
+
+```
+
+Now we can create our ANN model with package keras 
+```{r,include=FALSE}
+# Assuming you have loaded the required libraries, including 'keras'
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Define the function to create and train the model
+create_and_train_model <- function(num_neurons) {
+  inputs <- layer_input(shape = c(1, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(num_neurons, activation = "sigmoid") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  early_stopping <- callback_early_stopping(patience = 5)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  
+  history <- model %>% fit(
+    train_dataset,
+    epochs = 15, # number of time we train on all our train_data
+    validation_data = val_dataset,
+    callbacks = list(early_stopping),
+    
+  )
+  
+  return(list(model = model, history = history))
+}
+
+# Define a range of neurons to test
+neurons_to_test <- c(1:5)
+
+# Initialize variables to track the best model and RMSE
+best_model <- NULL
+best_rmse <- Inf
+
+# Loop over different numbers of neurons
+for (num_neurons in neurons_to_test) {
+  result <- create_and_train_model(num_neurons)
+  current_rmse <- sqrt(tail(result$history$metrics$val_loss, 1))
+  
+  cat("Number of neurons:", num_neurons, " - RMSE:", current_rmse, "\n")
+  
+  if (current_rmse < best_rmse) {
+    best_rmse <- current_rmse
+    best_model <- result$model
+  }
+}
+
+# So here we have the structure of our best model
+print(best_model)
+print(best_rmse)
+```
+
+Save the prediction on our entire train_data to compare with the real value 
+```{r,include=FALSE}
+pred<-best_model%>%predict(train0_dataset)
+```
+
+```{r}
+# Renormalize our predictions
+renormaliser <- function(x_normalized, min_original, max_original) {
+  x_original <- x_normalized * (max_original - min_original) + min_original
+  return(x_original)
+}
+
+pred_ann <- renormaliser(pred, min(train_data), max(train_data))
+
+```
+
+```{r}
+# Create a graph comparing observed and predicted data
+plot(tail(train_data,-1), main = "comparing observed and predicted data",
+     xlab = "Date", ylab = "observed values", col = "blue", ylim = range(c(train_data, pred_ann)))
+lines(pred_ann, col = "red", lty = 2)
+legend("topright", legend = c("Observed", "predicted"), col = c("blue", "red"), lty = c(1, 2))
+
+# Calculate the forecast error, for example, the square root of the mean of the squared deviations
+rmse <- sqrt(mean((tail(train_data,-1) - pred_ann)^2))
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+```
+
+#Second step : create the ANN-ARIMA model 
+
+We have two type of model, the additive model and multiplicative model.
+
+```{r}
+#Additive model
+no_linear_add = train_data-predictions_arima 
+no_linear_multi=train_data/predictions_arima
+plot.ts(no_linear_add)
+plot.ts(no_linear_multi)
+```
+We have already use our arima model so now we can create our ANN model for our ANN-ARIMA model
+```{r, include=FALSE}
+# We need to normalize our data before use them in ANN 
+
+# Apply Min-Max scaling to your data
+normalized_add <- min_max_scale(no_linear_add)
+normalized_multi <- min_max_scale(no_linear_multi)
+```
+
+## The with our ANN model before
+```{r,include=FALSE}
+train0_sequence <- normalized_multi
+train_sequence <- normalized_multi[1:200]
+val_sequence<- normalized_multi[1201:1460]
+
+train0_dataset <- timeseries_dataset_from_array(
+  data = train0_sequence,
+  targets = tail(train0_sequence,-1),
+  sequence_length = 1,
+  batch_size = 146
+)
+
+train_dataset <- timeseries_dataset_from_array(
+  data = train_sequence,
+  targets = tail(train_sequence,-1),
+  sequence_length = 1,
+  batch_size = 120
+)
+
+val_dataset <- timeseries_dataset_from_array(
+  data = val_sequence,
+  targets = tail(val_sequence,-1),
+  sequence_length = 1,
+  batch_size = 20
+)
+
+train_dataset_iterator <- as_array_iterator(train_dataset)
+val_dataset_iterator<-as_array_iterator(val_dataset)
+
+repeat {
+  batch <- iter_next(train_dataset_iterator)
+  if (is.null(batch))
+    break
+  c(inputs, targets) %<-% batch
+  for (r in 1:nrow(inputs))
+    cat(sprintf("input: [ %s ] target: %s\n", 
+                paste(inputs[r, ], collapse = " "), targets[r]))
+  cat(strrep("-", 27), "\n")
+}
+
+repeat {
+  batch <- iter_next(val_dataset_iterator)
+  if (is.null(batch))
+    break
+  c(inputs, targets) %<-% batch
+  for (r in 1:nrow(inputs))
+    cat(sprintf("input: [ %s ] target: %s\n", 
+                paste(inputs[r, ], collapse = " "), targets[r]))
+  cat(strrep("-", 27), "\n")
+}
+
+
+```
+
+```{r,include=FALSE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Define the function to create and train the model
+create_and_train_model <- function(num_neurons) {
+  inputs <- layer_input(shape = c(1, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(num_neurons, activation = "sigmoid") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  early_stopping <- callback_early_stopping(patience = 5)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics='mae',
+  )
+  
+  history <- model %>% fit(
+    train_dataset,
+    epochs = 15,
+    validation_data = val_dataset,
+    callbacks = list(early_stopping),
+    
+  )
+  
+  return(list(model = model, history = history))
+}
+
+# Define a range of neurons to test
+neurons_to_test <- c(1:5)
+
+# Initialize variables to track the best model and RMSE
+best_model_multi <- NULL
+best_rmse <- Inf
+
+# Loop over different numbers of neurons
+for (num_neurons in neurons_to_test) {
+  result <- create_and_train_model(num_neurons)
+  current_rmse <- sqrt(tail(result$history$metrics$val_loss, 1))
+  
+  cat("Number of neurons:", num_neurons, " - RMSE:", current_rmse, "\n")
+  
+  if (current_rmse < best_rmse) {
+    best_rmse <- current_rmse
+    best_model_multi <- result$model
+  }
+}
+
+print(best_model_multi)
+print(best_rmse)
+pred<-best_model_multi%>%predict(train0_dataset)
+```
+
+
+```{r}
+pred_ann_multi <- renormaliser(pred, min(no_linear_multi), max(no_linear_multi))
+```
+
+```{r}
+plot(no_linear_multi, main = "Comparaison des données observées et prédites", xlab = "Date", ylab = "Valeurs observées", col = "blue", ylim = range(c(no_linear_multi, pred_ann_multi)))
+lines(pred_ann_multi, col = "red", lty = 2)
+legend("topright", legend = c("Observées", "Prédites"), col = c("blue", "red"), lty = c(1, 2))
+
+# Calculer l'erreur de prévision, par exemple, la racine carrée de la moyenne des carrés des écarts
+rmse <- sqrt(mean((tail(no_linear_multi,-1) - pred_ann_multi)^2))
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+```
+
+## Create ann  for the additive model 
+
+```{r,include=FALSE}
+train0_sequence <- normalized_add
+train_sequence <- normalized_add[1:1200]
+val_sequence<- normalized_add[1201:1460]
+
+train0_dataset <- timeseries_dataset_from_array(
+  data = train0_sequence,
+  targets = tail(train0_sequence,-1),
+  sequence_length = 1,
+  batch_size = 146
+)
+
+train_dataset <- timeseries_dataset_from_array(
+  data = train_sequence,
+  targets = tail(train_sequence,-1),
+  sequence_length = 1,
+  batch_size = 120
+)
+
+val_dataset <- timeseries_dataset_from_array(
+  data = val_sequence,
+  targets = tail(val_sequence,-1),
+  sequence_length = 1,
+  batch_size = 20
+)
+
+
+library(tfdatasets)
+train_dataset_iterator <- as_array_iterator(train_dataset)
+val_dataset_iterator<-as_array_iterator(val_dataset)
+
+repeat {
+  batch <- iter_next(train_dataset_iterator)
+  if (is.null(batch))
+    break
+  c(inputs, targets) %<-% batch
+  for (r in 1:nrow(inputs))
+    cat(sprintf("input: [ %s ] target: %s\n", 
+                paste(inputs[r, ], collapse = " "), targets[r]))
+  cat(strrep("-", 27), "\n")
+}
+
+repeat {
+  batch <- iter_next(val_dataset_iterator)
+  if (is.null(batch))
+    break
+  c(inputs, targets) %<-% batch
+  for (r in 1:nrow(inputs))
+    cat(sprintf("input: [ %s ] target: %s\n", 
+                paste(inputs[r, ], collapse = " "), targets[r]))
+  cat(strrep("-", 27), "\n")
+}
+
+
+```
+
+```{r,include=FALSE}
+# Assuming you have loaded the required libraries, including 'keras'
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Define the function to create and train the model
+create_and_train_model <- function(num_neurons) {
+  inputs <- layer_input(shape = c(1, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(num_neurons, activation = "sigmoid") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  early_stopping <- callback_early_stopping(patience = 5)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics='mae',
+  )
+  
+  history <- model %>% fit(
+    train_dataset,
+    epochs = 15,
+    validation_data = val_dataset,
+    callbacks = list(early_stopping),
+    
+  )
+  
+  return(list(model = model, history = history))
+}
+
+# Define a range of neurons to test
+neurons_to_test <- c(1:5)
+
+# Initialize variables to track the best model and RMSE
+best_model_add <- NULL
+best_rmse <- Inf
+
+# Loop over different numbers of neurons
+for (num_neurons in neurons_to_test) {
+  result <- create_and_train_model(num_neurons)
+  current_rmse <- sqrt(tail(result$history$metrics$val_loss, 1))
+  
+  cat("Number of neurons:", num_neurons, " - RMSE:", current_rmse, "\n")
+  
+  if (current_rmse < best_rmse) {
+    best_rmse <- current_rmse
+    best_model_add <- result$model
+  }
+}
+
+print(best_model_add)
+print(best_rmse)
+pred<-best_model_add%>%predict(train0_dataset)
+```
+
+```{r}
+pred_ann_add <- renormaliser(pred, min(no_linear_add), max(no_linear_add))
+```
+
+```{r}
+plot(no_linear_add, main = "Comparaison des données observées et prédites", xlab = "Date", ylab = "Valeurs observées", col = "blue", ylim = range(c(no_linear_add, pred_ann_add)))
+lines(pred_ann_add, col = "red", lty = 2)
+legend("topright", legend = c("Observées", "Prédites"), col = c("blue", "red"), lty = c(1, 2))
+
+rmse <- sqrt(mean((tail(no_linear_add,-1) - pred_ann_add)^2))
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+```
+
+### FINALLY Compare our 4 models on train_data
+
+```{r}
+pred_add_final<-tail(predictions_arima,-1)+pred_ann_add
+pred_multi_final<-tail(predictions_arima,-1)*pred_ann_multi
+# Faire 4 graph différent
+plot(train_data, main = "Comparaison des données observées, prédites et la troisième variable",
+     xlab = "Date", ylab = "Valeurs", col = "blue", ylim = range(c(train_data, pred_add_final,predictions_arima)))
+lines(pred_add_final, col = "red", lty = 2)
+lines(predictions_arima, col = "green",lty=2)
+lines(pred_ann_multi,col="pink",lty=2)
+legend("topright", legend = c("Observées", "additive model"), col = c("blue", "red",'green','pink'), lty = c(1,2,2,2))
+
+# MSE add model
+mse_1 <- mean((tail(train_data,-1) - pred_add_final)^2)
+cat(" Mean Squared Error for additive model:", mse_1, "\n")
+
+# MSE arima model
+mse_2 <- mean((tail(train_data,-1) - tail(predictions_arima,-1))^2)
+cat(" Mean Squared Error for arima :", mse_2, "\n")
+
+# MSE multi model
+mse_3 <- mean((tail(train_data,-1) - pred_multi_final)^2)
+cat(" Mean Squared Error for multiplicative model:", mse_3, "\n")
+
+#MSE ANN model 
+mse_4<-mean((tail(train_data,-1)-pred_ann)^2)
+cat("Mean Squared Error for ann model:", mse_4, "\n")
+
+```
+## Try our models on test data 
+
+Firslty for ANN model and ARIMA 
+```{r}
+test_arima<- predict(arima, n.ahead = length(test_data))$pred
+
+# We need to prepare our test data for ann model
+test_data_ann<-min_max_scale(test_data)
+test_dataset <- timeseries_dataset_from_array(
+  data = test_data_ann,
+  targets = tail(test_data_ann,-1),
+  sequence_length = 1,
+  batch_size = 30
+)
+test_ann<-best_model%>%predict(test_dataset)
+test_ann<-renormaliser(test_ann,min(test_data),max(test_data))
+```
+
+Finally on our ANN-ARIMA models 
+```{r}
+## Additive 
+test_add<-test_data-test_arima
+test_add_no<-min_max_scale(test_add)
+test_dataset_add <- timeseries_dataset_from_array(
+  data = test_add_no,
+  targets = tail(test_add_no,-1),
+  sequence_length = 1,
+  batch_size = 30
+)
+test_dataset_add_pred<-best_model_add%>%predict(test_dataset_add)
+test_add_final0<-renormaliser(test_dataset_add_pred,min(test_add),max(test_add))
+test_add_final<-test_add_final0+tail(test_arima,-1)
+
+## Multiplicative
+
+test_multi<-test_data/test_arima
+test_multi_no<-min_max_scale(test_multi)
+test_dataset_multi<- timeseries_dataset_from_array(
+  data = test_multi_no,
+  targets = tail(test_multi_no,-1),
+  sequence_length = 1,
+  batch_size = 30
+)
+test_dataset_multi_pred<-best_model_multi%>%predict(test_dataset_multi)
+test_multi_final0<-renormaliser(test_dataset_multi_pred,min(test_multi),max(test_multi))
+test_multi_final<-test_multi_final0*tail(test_arima,-1)
+```
+
+```{r}
+
+# Plot for Additive Model
+plot(tail(test_data,-1), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "Additive Model",ylim = range(c(test_data,test_add_final)))
+lines(data.frame(test_add_final), col = "red", lty = 1)
+legend("topright", legend = c("Test Data", "Additive Model"), col = c(1, 2), lty = 1)
+
+# Plot for ARIMA Model
+plot(tail(test_data,-1), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "ARIMA Model")
+lines(data.frame(test_arima), col = "red", lty = 1)
+legend("topright", legend = c("Test Data", "ARIMA Model"), col = c(1, 3), lty = 1)
+
+# Plot for Multiplicative Model
+plot(tail(test_data,-1), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "Multiplicative Model")
+lines(data.frame(test_multi_final), col = "red", lty = 1)
+legend("topright", legend = c("Test Data", "Multiplicative Model"), col = c(1, 4), lty = 1)
+
+# Plot for ANN Model
+plot(tail(test_data,-1), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "ANN Model")
+lines(data.frame(test_ann), col = "red", lty = 1)
+legend("topright", legend = c("Test Data", "ANN Model"), col = c(1, 5), lty = 1)
+
+# MSE add model
+mse_1 <- mean((tail(test_data,-1) - test_add_final)^2)
+cat(" Mean Squared Error for additive model:", mse_1, "\n")
+
+# MSE arima model
+mse_2 <- mean((tail(test_data,-1) - tail(test_arima,-1))^2)
+cat(" Mean Squared Error for arima :", mse_2, "\n")
+
+# MSE multi model
+mse_3 <- mean((tail(test_data,-1) - test_multi_final)^2)
+cat(" Mean Squared Error for multiplicative model:", mse_3, "\n")
+
+#MSE ANN model 
+mse_4<-mean((tail(test_data,-1)-test_ann)^2)
+cat("Mean Squared Error for ann model:", mse_4, "\n")
+```
+Like the first test on lynx Data ANN model is the best model, following by ARIMA and far away behind our two other hybrid model. 
+
+
+```{r}
+# Supposons que model_8 est votre modèle Keras
+# Supposons également que vous avez une séquence temporelle appelée initial_sequence
+
+# Nombre d'instants futurs que vous souhaitez prédire
+num_future_points <- 10
+
+# Initialiser un vecteur pour stocker les prédictions futures
+future_predictions <- numeric(num_future_points)
+
+# Utiliser la dernière fenêtre temporelle connue comme point de départ
+last_known_data <- tail(initial_sequence, 2)
+
+# Boucle pour générer les prédictions pour les instants futurs
+for (i in 1:num_future_points) {
+  # Effectuer une prédiction pour le prochain instant temporel
+  current_prediction <- predict(model_8, newdata = as.matrix(last_known_data))
+
+  # Stocker la prédiction
+  future_predictions[i] <- current_prediction
+
+  # Mettre à jour last_known_data pour inclure la prédiction actuelle
+  last_known_data <- c(last_known_data[2], current_prediction)
+}
+
+# Maintenant, future_predictions contient les prédictions pour les instants futurs
+```
