@@ -1,83 +1,109 @@
 ---
-title: "ARIMA-ANN"
-author: "JARRY Antoine"
-date: '2024-02-03'
+title: "Projet_recherche"
 output: html_document
+date: "2024-03-15"
 ---
 
+# Installing the necessary package 
 ```{r setup, include=FALSE}
-library(tseries)
+set.seed(123)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
 library(forecast)
-library(neuralnet)
 library(caret)
+install.packages("tfruns")
+library(tfruns)
 library(tensorflow)
 library(keras)
 library(tfdatasets)
-usethis::use_git()
+library(fma)
+
+Sys.setenv(TENSORFLOW_DEFAULT_GPU_DEVICE = "gpu")
+
+
+tensorflow::set_random_seed(123) #For the reproductibility of our ANN 
 ```
 
-# Prepare our Lynx Data
-
-```{r}
-data <- read.csv("C:/Users/Antoine Jarry/Desktop/Data/temporal_df.csv")
-
-data$Year <- as.Date(paste0(data$Year,"-01-01"))
-data<-data[,1:2]
-```
-
-Create time series
-
+# Upload the same data as the paper 
 ```{r}
 
-ts_data <- ts(data$Range_area, frequency = 1)
-plot(ts_data) # Probably no season
+data_lynx<-log10(lynx)
+data(ibmclose)
+data_ibm<-ibmclose
+data_sunspot<-ts(sunspot.year[1:288])
+
+plot.ts(data_lynx)
+plot.ts(data_ibm)
+plot.ts(data_sunspot)
+
 ```
 
-Finally split the data 
+# Split into train_data and test_data
 ```{r}
-# Assuming 'your_data' is your time series data
-set.seed(123)  # Set seed for reproducibility
+train_d_lynx<-data_lynx[1:100]
+test_d_lynx<-data_lynx[101:114]
 
-# Specify the percentage of data for training
-train_percentage <- 0.8
+train_d_ibm<-data_ibm[1:299]
+test_d_ibm<-data_ibm[300:369]
 
-# Calculate the index for splitting
-split_index <- floor(NROW(ts_data) * train_percentage)
+train_d_sunspot<-data_sunspot[1:221]
+test_d_sunspot<-data_sunspot[222:288]
 
-# Split the time series into training and testing sets
-train_data <- ts_data[1:split_index]
-test_data <- ts_data[(split_index + 1):length(ts_data)]
-
-# Print the training and testing sets
-plot.ts(train_data)
-plot.ts(test_data)
 ```
 
-# So now lets make our arima model thanks the function auto.arima()
-
-```{r}
-arima<-auto.arima(train_data,seasonal = FALSE)
-print(arima)
-```
-
-Compare predictions and observations 
+## Start with ARIMA models
 
 ```{r}
-predictions_arima <- fitted(arima)
+### ARIMA Lynx
+# Train_data
+ar_lynx<-arima(train_d_lynx,order=c(11,0,0))
+predictions_arima_lynx<-fitted(ar_lynx)
+mse_arima_train_lynx<-mean((predictions_arima_lynx[8:100]-train_d_lynx[8:100])^2) #For the comparaison with ANN models who take 7 inputs
+plot.ts(train_d_lynx)
+lines(predictions_arima_lynx,lty=2,col='red')
 
-# Créer un graphique comparant les données observées et les données prédites
-plot(train_data, main = "Comparaison des données observées et prédites",
-     xlab = "Date", ylab = "Valeurs observées", col = "blue", ylim = range(c(train_data, predictions_arima)))
-lines(predictions_arima, col = "red", lty = 2)
-legend("topright", legend = c("Observées", "Prédites"), col = c("blue", "red"), lty = c(1, 2))
+# Test_data
+pred_lynx<-predict(ar_lynx,n.ahead=length(test_d_lynx))
+mse_arima_test_lynx<-mean((test_d_lynx-pred_lynx$pred)^2)
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(pred_lynx$pred))))
+lines(data.frame(pred_lynx$pred),lty=2,col='red',)
 
-# Calculer l'erreur de prévision, par exemple, la racine carrée de la moyenne des carrés des écarts
-rmse <- sqrt(mean((train_data - predictions_arima)^2))
-cat("Root Mean Squared Error (RMSE):", rmse, "\n")
 ```
-##SOLO ANN : 
 
-Normalize our data for ANN
+```{r}
+### ARIMA IBM
+# Train_data
+ar_ibm<-arima(train_d_ibm,order=c(1,1,2))
+predictions_arima_ibm<-fitted(ar_ibm)
+mse_arima_train_ibm<-mean((predictions_arima_ibm[7:299]-train_d_ibm[7:299])^2) #For the comparaison with ANN models who take 6 inputs
+plot.ts(train_d_ibm)
+lines(predictions_arima_ibm,lty=2,col='red')
+
+# Test_data
+pred_ibm<-predict(ar_ibm,n.ahead=length(test_d_ibm))
+mse_arima_test_ibm<-mean((test_d_ibm-pred_ibm$pred)^2)
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(pred_ibm$pred))))
+lines(data.frame(pred_ibm$pred),lty=2,col='red')
+```
+
+```{r}
+### ARIMA Sunspot
+# Train_data
+ar_sunspot<-arima(train_d_sunspot,order=c(9,0,0))
+predictions_arima_sunspot<-fitted(ar_sunspot)
+mse_arima_train_sunspot<-mean((predictions_arima_sunspot[5:100]-train_d_sunspot[5:100])^2) #For the comparaison with ANN models who take 4 inputs
+plot.ts(train_d_sunspot)
+lines(predictions_arima_sunspot,lty=2,col='red')
+
+# Test_data
+pred_sunspot<-predict(ar_sunspot,n.ahead=length(test_d_sunspot))
+mse_arima_test_sunspot<-mean((test_d_sunspot-pred_sunspot$pred)^2)
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(pred_sunspot$pred))))
+lines(data.frame(pred_sunspot$pred),lty=2,col='red',)
+```
+
+### Now ANN model alone
+
+Make function to normalize and renormalize for the ann models
 ```{r, include=FALSE}
 # We need to normalize our data before use them in ANN 
 
@@ -85,591 +111,1071 @@ min_max_scale <- function(x) {
   (x - min(x)) / (max(x) - min(x))
 }
 
-# Apply Min-Max scaling to your data
-normalized_ann <- min_max_scale(train_data)
+renormaliser <- function(x, min_val, max_val) {
+  denormalized <- x * (max_val - min_val) + min_val
+  return(denormalized)
+  }
 ```
 
-```{r}
-tail(train_data,-2)
-head(train_data,-2)
-```
+## Lynx data
 
-Create a generator function because time series need this and batch size for get time on the training memory during the epoch( = training on entire dataset)
+# Train our model
 ```{r,include=FALSE}
-train0_sequence <- normalized_ann
-train_sequence <- normalized_ann[1:45]
-val_sequence<- normalized_ann[46:56] #Split our train_data in valditaion_data for our model
-
-train0_dataset <- timeseries_dataset_from_array(
-  data = train0_sequence,
-  targets = tail(train0_sequence,-2),
-  sequence_length = 2, # the past 2 timesteps to predict the next timestep
-  batch_size = 7 # size of all our batch
-)
-
-train_dataset <- timeseries_dataset_from_array(
-  data =  train_sequence,
-  targets = tail(train_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-
-val_dataset <- timeseries_dataset_from_array(
-  data = val_sequence,
-  targets = tail(val_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-
-train_dataset_iterator <- as_array_iterator(train_dataset)
-val_dataset_iterator<-as_array_iterator(val_dataset)
-
-repeat {
-  batch <- iter_next(train_dataset_iterator)
-  if (is.null(batch))
-    break
-  c(inputs, targets) %<-% batch
-  for (r in 1:nrow(inputs))
-    cat(sprintf("input: [ %s ] target: %s\n", 
-                paste(inputs[r, ], collapse = " "), targets[r]))
-  cat(strrep("-", 27), "\n")
-}
-
-repeat {
-  batch <- iter_next(val_dataset_iterator)
-  if (is.null(batch))
-    break
-  c(inputs, targets) %<-% batch
-  for (r in 1:nrow(inputs))
-    cat(sprintf("input: [ %s ] target: %s\n", 
-                paste(inputs[r, ], collapse = " "), targets[r]))
-  cat(strrep("-", 27), "\n")
-}
-
-```
-
-Now we can create our ANN model with package keras 
-```{r,include=FALSE}
-# Assuming you have loaded the required libraries, including 'keras'
-
-# Set seed for reproducibility
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- data.frame(train_d_lynx)
+# Define the number of folds for cross-validation
+num_folds <- 10
 set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
 
-# Define the function to create and train the model
-create_and_train_model <- function(num_neurons) {
-  inputs <- layer_input(shape = c(2, 1))
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
   outputs <- inputs %>%
     layer_flatten()%>%
-    layer_dense(num_neurons, activation = "sigmoid") %>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
     layer_dense(1, activation='linear')
   
   model <- keras_model(inputs, outputs)
-  
-  early_stopping <- callback_early_stopping(patience = 5)
   
   model %>% compile(
     optimizer = "rmsprop",
     loss = "mse",
     metrics="mae"
   )
-  
-  history <- model %>% fit(
-    train_dataset,
-    epochs = 15, # number of time we train on all our train_data
-    validation_data = val_dataset,
-    callbacks = list(early_stopping),
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
     
+    train_dataset <- timeseries_dataset_from_array(
+    data =  min_max_scale(train_sequence),
+    targets = tail(min_max_scale(train_sequence),-input_nodes),
+    sequence_length = input_nodes,
   )
   
-  return(list(model = model, history = history))
-}
-
-# Define a range of neurons to test
-neurons_to_test <- c(1:5)
-
-# Initialize variables to track the best model and RMSE
-best_model <- NULL
-best_rmse <- Inf
-
-# Loop over different numbers of neurons
-for (num_neurons in neurons_to_test) {
-  result <- create_and_train_model(num_neurons)
-  current_rmse <- sqrt(tail(result$history$metrics$val_loss, 1))
+    val_dataset <- timeseries_dataset_from_array(
+    data = min_max_scale(val_sequence),
+    targets = tail(min_max_scale(val_sequence),-input_nodes),
+    sequence_length = input_nodes,
+  )
   
-  cat("Number of neurons:", num_neurons, " - RMSE:", current_rmse, "\n")
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
   
-  if (current_rmse < best_rmse) {
-    best_rmse <- current_rmse
-    best_model <- result$model
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
   }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
 }
 
-# So here we have the structure of our best model
-print(best_model)
-print(best_rmse)
+input_nodes<- 7
+hidden_nodes<- 5 
+
+results_train_lynx_ann<-train_model(input_nodes,hidden_nodes)
+best_model_ann_lynx<-results_train_lynx_ann$Mdl
+mse_ann_train_lynx<- results_train_lynx_ann$MSE
+
+complete_train_lynx<-timeseries_dataset_from_array(
+    data =  min_max_scale(train_d_lynx),
+    targets = tail(min_max_scale(train_d_lynx),-7),
+    sequence_length = 7,
+  )
+pred_complete_train_ann_lynx<-best_model_ann_lynx%>%predict(complete_train_lynx)
+pred_complete_train_ann_lynx<-renormaliser(pred_complete_train_ann_lynx,min(train),max(train))
+mse_complete_train_ann_lynx<-mean((tail(train_d_lynx,-7)-pred_complete_train_ann_lynx)^2)
 ```
 
-Save the prediction on our entire train_data to compare with the real value 
+## Test data
+
+```{r}
+test<-data_lynx[94:114]
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test),
+  targets = min_max_scale(test)[101:114],
+  sequence_length = 7,
+)
+test_ann_lynx<-best_model_ann_lynx%>%predict(test_dataset)
+test_ann_lynx<-renormaliser(test_ann_lynx,min(test),max(test))
+mse_ann_test_lynx<-mean((test_d_lynx-test_ann_lynx)^2)
+```
+
+## IBM data
+
+# Train our model
 ```{r,include=FALSE}
-pred<-best_model%>%predict(train0_dataset)
-```
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- data.frame(train_d_ibm)
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
 
-```{r}
-# Renormalize our predictions
-renormaliser <- function(x_normalized, min_original, max_original) {
-  x_original <- x_normalized * (max_original - min_original) + min_original
-  return(x_original)
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
 }
 
-pred_ann <- renormaliser(pred, min(train_data), max(train_data))
+best_mse<-100000
+cv_results1<-numeric(num_folds)
 
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  min_max_scale(train_sequence),
+    targets = tail(min_max_scale(train_sequence),-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = min_max_scale(val_sequence),
+    targets = tail(min_max_scale(val_sequence),-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 6
+hidden_nodes<- 5 
+
+results_train_ibm_ann<-train_model(input_nodes,hidden_nodes)
+best_model_ann_ibm<-results_train_ibm_ann$Mdl
+mse_ann_train_ibm<- results_train_ibm_ann$MSE
+
+complete_train_ibm<-timeseries_dataset_from_array(
+    data =  min_max_scale(train_d_ibm),
+    targets = tail(min_max_scale(train_d_ibm),-6),
+    sequence_length = 6,
+  )
+pred_complete_train_ann_ibm<-best_model_ann_ibm%>%predict(complete_train_ibm)
+pred_complete_train_ann_ibm<-renormaliser(pred_complete_train_ann_ibm,min(train),max(train))
+mse_complete_train_ann_ibm<-mean((tail(train_d_ibm,-6)-pred_complete_train_ann_ibm)^2)
 ```
+
+## Test data
 
 ```{r}
-# Create a graph comparing observed and predicted data
-plot(train_data, main = "comparing observed and predicted data",
-     xlab = "Date", ylab = "observed values", col = "blue", ylim = range(c(train_data, pred_ann)))
-lines(pred_ann, col = "red", lty = 2)
-legend("topright", legend = c("Observed", "predicted"), col = c("blue", "red"), lty = c(1, 2))
-
-# Calculate the forecast error, for example, the square root of the mean of the squared deviations
-rmse <- sqrt(mean((tail(train_data,-2) - pred_ann)^2))
-cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+test<-data_ibm[294:369]
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test),
+  targets = min_max_scale(test)[300:369],
+  sequence_length = 6,
+)
+test_ann_ibm<-best_model_ann_ibm%>%predict(test_dataset)
+test_ann_ibm<-renormaliser(test_ann_ibm,min(test),max(test))
+mse_ann_test_ibm<-mean((test_d_ibm-test_ann_ibm)^2)
 ```
 
-#Second step : create the ANN-ARIMA model 
+## Sunspot data
+
+# Train our model
+```{r,include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- data.frame(train_d_sunspot)
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
+
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  min_max_scale(train_sequence),
+    targets = tail(min_max_scale(train_sequence),-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = min_max_scale(val_sequence),
+    targets = tail(min_max_scale(val_sequence),-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 4
+hidden_nodes<- 4
+
+results_train_sunspot_ann<-train_model(input_nodes,hidden_nodes)
+best_model_ann_sunspot<-results_train_sunspot_ann$Mdl
+mse_ann_ann_sunspot<- results_train_sunspot_ann$MSE
+
+complete_train_sunspot<-timeseries_dataset_from_array(
+    data =  min_max_scale(train_d_sunspot),
+    targets = tail(min_max_scale(train_d_sunspot),-4),
+    sequence_length = 4,
+  )
+pred_complete_train_ann_sunspot<-best_model_ann_sunspot%>%predict(complete_train_sunspot)
+pred_complete_train_ann_sunspot<-renormaliser(pred_complete_train_ann_sunspot,min(train),max(train))
+mse_complete_train_ann_sunspot<-mean((tail(train_d_sunspot,-4)-pred_complete_train_ann_sunspot)^2)
+```
+
+## Test data
+
+```{r}
+test<-data_sunspot[218:288]
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test),
+  targets = min_max_scale(test)[222:288],
+  sequence_length = 4,
+)
+test_ann_sunspot<-best_model_ann_sunspot%>%predict(test_dataset)
+test_ann_sunspot<-renormaliser(test_ann_sunspot,min(test),max(test))
+mse_ann_test_sunspot<-mean((test_d_sunspot-test_ann_sunspot)^2)
+```
+
+#### Second step : create the ANN-ARIMA model 
 
 We have two type of model, the additive model and multiplicative model.
-
-```{r}
-#Additive model
-no_linear_add = train_data-predictions_arima 
-no_linear_multi=train_data/predictions_arima
-plot.ts(no_linear_add)
-plot.ts(no_linear_multi)
-```
 We have already use our arima model so now we can create our ANN model for our ANN-ARIMA model
+```{r}
+# Lynx data
+
+add_train_lynx = train_d_lynx-predictions_arima_lynx
+multi_train_lynx= train_d_lynx/predictions_arima_lynx
+
+# IBM data 
+
+add_train_ibm = train_d_ibm-predictions_arima_ibm
+multi_train_ibm= train_d_ibm/predictions_arima_ibm
+
+# Sunspot data 
+
+add_train_sunspot = train_d_sunspot-predictions_arima_sunspot
+multi_train_sunspot= train_d_sunspot/predictions_arima_sunspot
+
+```
+
+We need to normalize our data before use them in ANN 
+
 ```{r, include=FALSE}
-# We need to normalize our data before use them in ANN 
 
-# Apply Min-Max scaling to your data
-normalized_add <- min_max_scale(no_linear_add)
-normalized_multi <- min_max_scale(no_linear_multi)
-```
+# Lynx data 
 
-## The with our ANN model before
-```{r,include=FALSE}
-train0_sequence <- normalized_multi
-train_sequence <- normalized_multi[1:45]
-val_sequence<- normalized_multi[46:56]
+normalized_add_train_lynx <- data.frame(min_max_scale(add_train_lynx))
+normalized_multi_train_lynx <- data.frame(min_max_scale(multi_train_lynx))
 
-train0_dataset <- timeseries_dataset_from_array(
-  data = train0_sequence,
-  targets = tail(train0_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
+# IBM data 
 
-train_dataset <- timeseries_dataset_from_array(
-  data = train_sequence,
-  targets = tail(train_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
+normalized_add_train_ibm <- data.frame(min_max_scale(add_train_ibm))
+normalized_multi_train_ibm <- data.frame(min_max_scale(multi_train_ibm))
 
-val_dataset <- timeseries_dataset_from_array(
-  data = val_sequence,
-  targets = tail(val_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
+# Sunspot data 
 
-train_dataset_iterator <- as_array_iterator(train_dataset)
-val_dataset_iterator<-as_array_iterator(val_dataset)
-
-repeat {
-  batch <- iter_next(train_dataset_iterator)
-  if (is.null(batch))
-    break
-  c(inputs, targets) %<-% batch
-  for (r in 1:nrow(inputs))
-    cat(sprintf("input: [ %s ] target: %s\n", 
-                paste(inputs[r, ], collapse = " "), targets[r]))
-  cat(strrep("-", 27), "\n")
-}
-
-repeat {
-  batch <- iter_next(val_dataset_iterator)
-  if (is.null(batch))
-    break
-  c(inputs, targets) %<-% batch
-  for (r in 1:nrow(inputs))
-    cat(sprintf("input: [ %s ] target: %s\n", 
-                paste(inputs[r, ], collapse = " "), targets[r]))
-  cat(strrep("-", 27), "\n")
-}
-
+normalized_add_train_sunspot <- data.frame(min_max_scale(add_train_sunspot))
+normalized_multi_train_sunspot <- data.frame(min_max_scale(multi_train_sunspot))
 
 ```
 
-```{r,include=FALSE}
+### Additive model first 
 
-# Set seed for reproducibility
+## Lynx data 
+
+# Train our model 
+
+```{r,include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- normalized_add_train_lynx
+# Define the number of folds for cross-validation
+num_folds <- 10
 set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
 
-# Define the function to create and train the model
-create_and_train_model <- function(num_neurons) {
-  inputs <- layer_input(shape = c(2, 1))
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
   outputs <- inputs %>%
     layer_flatten()%>%
-    layer_dense(num_neurons, activation = "sigmoid") %>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
     layer_dense(1, activation='linear')
   
   model <- keras_model(inputs, outputs)
   
-  early_stopping <- callback_early_stopping(patience = 5)
-  
   model %>% compile(
     optimizer = "rmsprop",
     loss = "mse",
-    metrics='mae',
+    metrics="mae"
   )
-  
-  history <- model %>% fit(
-    train_dataset,
-    epochs = 15,
-    validation_data = val_dataset,
-    callbacks = list(early_stopping),
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
     
+    train_dataset <- timeseries_dataset_from_array(
+    data =  train_sequence,
+    targets = tail(train_sequence,-input_nodes),
+    sequence_length = input_nodes,
   )
   
-  return(list(model = model, history = history))
-}
-
-# Define a range of neurons to test
-neurons_to_test <- c(1:5)
-
-# Initialize variables to track the best model and RMSE
-best_model_multi <- NULL
-best_rmse <- Inf
-
-# Loop over different numbers of neurons
-for (num_neurons in neurons_to_test) {
-  result <- create_and_train_model(num_neurons)
-  current_rmse <- sqrt(tail(result$history$metrics$val_loss, 1))
-  
-  cat("Number of neurons:", num_neurons, " - RMSE:", current_rmse, "\n")
-  
-  if (current_rmse < best_rmse) {
-    best_rmse <- current_rmse
-    best_model_multi <- result$model
-  }
-}
-
-print(best_model_multi)
-print(best_rmse)
-pred<-best_model_multi%>%predict(train0_dataset)
-```
-
-
-```{r}
-pred_ann_multi <- renormaliser(pred, min(no_linear_multi), max(no_linear_multi))
-```
-
-```{r}
-plot(no_linear_multi, main = "Comparaison des données observées et prédites", xlab = "Date", ylab = "Valeurs observées", col = "blue", ylim = range(c(no_linear_multi, pred_ann_multi)))
-lines(pred_ann_multi, col = "red", lty = 2)
-legend("topright", legend = c("Observées", "Prédites"), col = c("blue", "red"), lty = c(1, 2))
-
-# Calculer l'erreur de prévision, par exemple, la racine carrée de la moyenne des carrés des écarts
-rmse <- sqrt(mean((tail(no_linear_multi,-2) - pred_ann_multi)^2))
-cat("Root Mean Squared Error (RMSE):", rmse, "\n")
-```
-
-## Create ann  for the additive model 
-
-```{r,include=FALSE}
-train0_sequence <- normalized_add
-train_sequence <- normalized_add[1:45]
-val_sequence<- normalized_add[46:56]
-
-train0_dataset <- timeseries_dataset_from_array(
-  data = train0_sequence,
-  targets = tail(train0_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-
-train_dataset <- timeseries_dataset_from_array(
-  data = train_sequence,
-  targets = tail(train_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-
-val_dataset <- timeseries_dataset_from_array(
-  data =val_sequence,
-  targets = tail(val_sequence,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-
-
-library(tfdatasets)
-train_dataset_iterator <- as_array_iterator(train_dataset)
-val_dataset_iterator<-as_array_iterator(val_dataset)
-
-repeat {
-  batch <- iter_next(train_dataset_iterator)
-  if (is.null(batch))
-    break
-  c(inputs, targets) %<-% batch
-  for (r in 1:nrow(inputs))
-    cat(sprintf("input: [ %s ] target: %s\n", 
-                paste(inputs[r, ], collapse = " "), targets[r]))
-  cat(strrep("-", 27), "\n")
-}
-
-repeat {
-  batch <- iter_next(val_dataset_iterator)
-  if (is.null(batch))
-    break
-  c(inputs, targets) %<-% batch
-  for (r in 1:nrow(inputs))
-    cat(sprintf("input: [ %s ] target: %s\n", 
-                paste(inputs[r, ], collapse = " "), targets[r]))
-  cat(strrep("-", 27), "\n")
-}
-
-
-```
-
-```{r,include=FALSE}
-# Assuming you have loaded the required libraries, including 'keras'
-
-# Set seed for reproducibility
-set.seed(123)
-
-# Define the function to create and train the model
-create_and_train_model <- function(num_neurons) {
-  inputs <- layer_input(shape = c(2, 1))
-  outputs <- inputs %>%
-    layer_flatten()%>%
-    layer_dense(num_neurons, activation = "sigmoid") %>%
-    layer_dense(1, activation='linear')
-  
-  model <- keras_model(inputs, outputs)
-  
-  early_stopping <- callback_early_stopping(patience = 5)
-  
-  model %>% compile(
-    optimizer = "rmsprop",
-    loss = "mse",
-    metrics='mae',
+    val_dataset <- timeseries_dataset_from_array(
+    data = val_sequence,
+    targets = tail(val_sequence,-input_nodes),
+    sequence_length = input_nodes,
   )
   
-  history <- model %>% fit(
-    train_dataset,
-    epochs = 15,
-    validation_data = val_dataset,
-    callbacks = list(early_stopping),
     
-  )
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
   
-  return(list(model = model, history = history))
-}
-
-# Define a range of neurons to test
-neurons_to_test <- c(1:5)
-
-# Initialize variables to track the best model and RMSE
-best_model_add <- NULL
-best_rmse <- Inf
-
-# Loop over different numbers of neurons
-for (num_neurons in neurons_to_test) {
-  result <- create_and_train_model(num_neurons)
-  current_rmse <- sqrt(tail(result$history$metrics$val_loss, 1))
-  
-  cat("Number of neurons:", num_neurons, " - RMSE:", current_rmse, "\n")
-  
-  if (current_rmse < best_rmse) {
-    best_rmse <- current_rmse
-    best_model_add <- result$model
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
   }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
 }
 
-print(best_model_add)
-print(best_rmse)
-pred<-best_model_add%>%predict(train0_dataset)
-```
+input_nodes<- 7
+hidden_nodes<- 5 
 
-```{r}
-pred_ann_add <- renormaliser(pred, min(no_linear_add), max(no_linear_add))
-```
+results_train_lynx_add<-train_model(input_nodes,hidden_nodes)
+best_model_add_lynx<-results_train_lynx_add$Mdl
+mse_add_train_lynx<- results_train_lynx_add$MSE
 
-```{r}
-plot(no_linear_add, main = "Comparaison des données observées et prédites", xlab = "Date", ylab = "Valeurs observées", col = "blue", ylim = range(c(no_linear_add, pred_ann_add)))
-lines(pred_ann_add, col = "red", lty = 2)
-legend("topright", legend = c("Observées", "Prédites"), col = c("blue", "red"), lty = c(1, 2))
-
-rmse <- sqrt(mean((tail(no_linear_add,-2) - pred_ann_add)^2))
-cat("Root Mean Squared Error (RMSE):", rmse, "\n")
-```
-
-### FINALLY Compare our 4 models on train_data
-
-```{r}
-pred_add_final<-tail(predictions_arima,-2)+pred_ann_add
-pred_multi_final<-tail(predictions_arima,-2)*pred_ann_multi
-# Faire 4 graph différent
-plot(train_data, main = "Comparaison des données observées, prédites et la troisième variable",
-     xlab = "Date", ylab = "Valeurs", col = "blue", ylim = range(c(train_data, pred_add_final,predictions_arima)))
-lines(pred_add_final, col = "red", lty = 2)
-lines(predictions_arima, col = "green",lty=2)
-lines(pred_ann_multi,col="pink",lty=2)
-legend("topright", legend = c("Observées", "additive model"), col = c("blue", "red",'green','pink'), lty = c(1,2,2,2))
-
-# MSE add model
-mse_1 <- mean((tail(train_data,-2) - pred_add_final)^2)
-cat(" Mean Squared Error for additive model:", mse_1, "\n")
-
-# MSE arima model
-mse_2 <- mean((tail(train_data,-2) - tail(predictions_arima,-2))^2)
-cat(" Mean Squared Error for arima :", mse_2, "\n")
-
-# MSE multi model
-mse_3 <- mean((tail(train_data,-2) - pred_multi_final)^2)
-cat(" Mean Squared Error for multiplicative model:", mse_3, "\n")
-
-#MSE ANN model 
-mse_4<-mean((tail(train_data,-2)-pred_ann)^2)
-cat("Mean Squared Error for ann model:", mse_4, "\n")
+complete_train_lynx<-timeseries_dataset_from_array(
+    data =  min_max_scale(add_train_lynx),
+    targets = tail(min_max_scale(add_train_lynx),-7),
+    sequence_length = 7,
+  )
+pred_complete_train_add_lynx<-best_model_add_lynx%>%predict(complete_train_lynx)
+pred_complete_train_add_lynx<-renormaliser(pred_complete_train_add_lynx,min(add_train_lynx),max(add_train_lynx))+tail(predictions_arima_lynx,-7)
+mse_complete_train_add_lynx<-mean((tail(train_d_lynx,-7)-pred_complete_train_add_lynx)^2)
 
 ```
-We can see our two hybrids models are behind ARIMA, ANN is far away behind three others.
 
-## Try our models on test data 
+## Test data
 
-Firslty for ANN model and ARIMA 
 ```{r}
-test_arima<- predict(arima, n.ahead = length(test_data))$pred
-
-
-# We need to prepare our test data for ann model
-test_data_ann<-min_max_scale(test_data)
+test<-test_d_lynx -pred_lynx$pred
+test_add_no<-c(normalized_add_train_lynx[94:100,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = test_data_ann,
-  targets = tail(test_data_ann,-2),
-  sequence_length = 2,
-  batch_size = 7
+  data = min_max_scale(test_add_no),
+  targets = min_max_scale(test_add_no)[101:114],
+  sequence_length = 7,
 )
-test_ann<-best_model%>%predict(test_dataset)
-test_ann<-renormaliser(test_ann,min(test_data),max(test_data))
+test_add_lynx<-best_model_add_lynx%>%predict(test_dataset)
+test_add_lynx<-renormaliser(test_add_lynx,min(test),max(test))+pred_lynx$pred
+mse_add_test_lynx<-mean((test_d_lynx-test_add_lynx)^2)
 ```
 
-Finally on our ANN-ARIMA models 
-```{r}
-## Additive 
-test_add<-test_data-test_arima
-test_add_no<-min_max_scale(test_add)
-test_dataset_add <- timeseries_dataset_from_array(
-  data = test_add_no,
-  targets = tail(test_add_no,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-test_dataset_add_pred<-best_model_add%>%predict(test_dataset_add)
-test_add_final0<-renormaliser(test_dataset_add_pred,min(test_add),max(test_add))
-test_add_final<-test_add_final0+tail(test_arima,-2)
+## IBM data
 
-## Multiplicative
+# Train our model
+```{r, include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- normalized_add_train_ibm
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
 
-test_multi<-test_data/test_arima
-test_multi_no<-min_max_scale(test_multi)
-test_dataset_multi<- timeseries_dataset_from_array(
-  data = test_multi_no,
-  targets = tail(test_multi_no,-2),
-  sequence_length = 2,
-  batch_size = 7
-)
-test_dataset_multi_pred<-best_model_multi%>%predict(test_dataset_multi)
-test_multi_final0<-renormaliser(test_dataset_multi_pred,min(test_multi),max(test_multi))
-test_multi_final<-test_multi_final0*tail(test_arima,-2)
-```
-
-### Compare our models on test_data
-
-```{r}
-
-# Plot for Additive Model
-plot(tail(test_data,-2), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "Additive Model",ylim = range(c(test_data,test_add_final)))
-lines(data.frame(test_add_final), col = "red", lty = 1)
-legend("topright", legend = c("Test Data", "Additive Model"), col = c(1, 2), lty = 1)
-
-# Plot for ARIMA Model
-plot(tail(test_data,-2), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "ARIMA Model")
-lines(data.frame(test_arima), col = "red", lty = 1)
-legend("topright", legend = c("Test Data", "ARIMA Model"), col = c(1, 3), lty = 1)
-
-# Plot for Multiplicative Model
-plot(tail(test_data,-2), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "Multiplicative Model")
-lines(data.frame(test_multi_final), col = "red", lty = 1)
-legend("topright", legend = c("Test Data", "Multiplicative Model"), col = c(1, 4), lty = 1)
-
-# Plot for ANN Model
-plot(tail(test_data,-2), type = "l", col = "blue", lty = 1, xlab = "Time", ylab = "Values", main = "ANN Model")
-lines(data.frame(test_ann), col = "red", lty = 1)
-legend("topright", legend = c("Test Data", "ANN Model"), col = c(1, 5), lty = 1)
-
-
-
-# MSE add model
-mse_1 <- mean((tail(test_data,-2) - test_add_final)^2)
-cat(" Mean Squared Error for additive model:", mse_1, "\n")
-
-# MSE arima model
-mse_2 <- mean((tail(test_data,-2) - tail(test_arima,-2))^2)
-cat(" Mean Squared Error for arima :", mse_2, "\n")
-
-# MSE multi model
-mse_3 <- mean((tail(test_data,-2) - test_multi_final)^2)
-cat(" Mean Squared Error for multiplicative model:", mse_3, "\n")
-
-#MSE ANN model 
-mse_4<-mean((tail(test_data,-2)-test_ann)^2)
-cat("Mean Squared Error for ann model:", mse_4, "\n")
-```
-
-Finally with our test_data we can see ANN model is the best, following by ARIMA and additive model. Far away behind the multiplicative model
-Why ? Explain the reason for the difference 
-
-```{r}
-# Supposons que model_8 est votre modèle Keras
-# Supposons également que vous avez une séquence temporelle appelée initial_sequence
-
-# Nombre d'instants futurs que vous souhaitez prédire
-num_future_points <- 10
-
-# Initialiser un vecteur pour stocker les prédictions futures
-future_predictions <- numeric(num_future_points)
-
-# Utiliser la dernière fenêtre temporelle connue comme point de départ
-last_known_data <- tail(initial_sequence, 2)
-
-# Boucle pour générer les prédictions pour les instants futurs
-for (i in 1:num_future_points) {
-  # Effectuer une prédiction pour le prochain instant temporel
-  current_prediction <- predict(best_model, newdata = as.matrix(last_known_data))
-
-  # Stocker la prédiction
-  future_predictions[i] <- current_prediction
-
-  # Mettre à jour last_known_data pour inclure la prédiction actuelle
-  last_known_data <- c(last_known_data[2], current_prediction)
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
 }
 
-# Maintenant, future_predictions contient les prédictions pour les instants futurs
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  train_sequence,
+    targets = tail(train_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = val_sequence,
+    targets = tail(val_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence)) 
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 6
+hidden_nodes<- 5 
+
+results_train_ibm_add<-train_model(input_nodes,hidden_nodes)
+best_model_add_ibm<-results_train_ibm_add$Mdl
+mse_add_train_ibm<- results_train_ibm_add$MSE
+
+complete_train_ibm<-timeseries_dataset_from_array(
+    data =  min_max_scale(add_train_ibm),
+    targets = tail(min_max_scale(add_train_ibm),-6),
+    sequence_length = 6,
+  )
+pred_complete_train_add_ibm<-best_model_add_ibm%>%predict(complete_train_ibm)
+pred_complete_train_add_ibm<-renormaliser(pred_complete_train_add_ibm,min(add_train_ibm),max(add_train_ibm))+tail(predictions_arima_ibm,-6)
+mse_complete_train_add_ibm<-mean((tail(train_d_ibm,-6)-pred_complete_train_add_ibm)^2)
+```
+
+## Test data
+
+```{r}
+test<-test_d_ibm-pred_ibm$pred
+test_add_no<-c(normalized_add_train_ibm[294:299,1],min_max_scale(test))
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test_add_no),
+  targets = min_max_scale(test_add_no)[300:369],
+  sequence_length = 6,
+)
+test_add_ibm<-best_model_add_ibm%>%predict(test_dataset)
+test_add_ibm<-renormaliser(test_add_ibm,min(test),max(test))+pred_ibm$pred
+mse_add_test_ibm<-mean((test_d_ibm-test_add_ibm)^2)
+```
+
+## Sunspot data
+
+# Train our model
+```{r, include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- normalized_add_train_sunspot
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
+
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  train_sequence,
+    targets = tail(train_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = val_sequence,
+    targets = tail(val_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% evaluate(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence)) 
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 4
+hidden_nodes<- 4
+
+results_train_sunspot_add<-train_model(input_nodes,hidden_nodes)
+best_model_add_sunspot<-results_train_sunspot_add$Mdl
+mse_add_train_sunspot<- results_train_sunspot_add$MSE
+
+complete_train_sunspot<-timeseries_dataset_from_array(
+    data =  min_max_scale(add_train_sunspot),
+    targets = tail(min_max_scale(add_train_sunspot),-4),
+    sequence_length = 4,
+  )
+pred_complete_train_add_sunspot<-best_model_add_sunspot%>%predict(complete_train_sunspot)
+pred_complete_train_add_sunspot<-renormaliser(pred_complete_train_add_sunspot,min(add_train_sunspot),max(add_train_sunspot))+tail(predictions_arima_sunspot,-4)
+mse_complete_train_add_sunspot<-mean((tail(train_d_sunspot,-4)-pred_complete_train_add_sunspot)^2)
+```
+
+## Test data
+
+```{r}
+test<-test_d_sunspot-pred_sunspot$pred
+test_add_no<-c(normalized_add_train_sunspot[218:221,1],min_max_scale(test))
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test_add_no),
+  targets = min_max_scale(test_add_no)[222:288],
+  sequence_length = 4,
+)
+test_add_sunspot<-best_model_add_sunspot%>%predict(test_dataset)
+test_add_sunspot<-renormaliser(test_add_sunspot,min(test),max(test))+pred_sunspot$pred
+mse_add_test_sunspot<-mean((test_d_sunspot-test_add_sunspot)^2)
+```
+
+### Multiplicative model Now 
+
+## Lynx data 
+
+# Train our model 
+
+```{r,include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- normalized_multi_train_lynx
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
+
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  train_sequence,
+    targets = tail(train_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = val_sequence,
+    targets = tail(val_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 7
+hidden_nodes<- 5 
+
+results_train_lynx_multi<-train_model(input_nodes,hidden_nodes)
+best_model_multi_lynx<-results_train_lynx_multi$Mdl
+mse_add_multi_lynx<- results_train_lynx_multi$MSE
+
+complete_train_lynx<-timeseries_dataset_from_array(
+    data =  min_max_scale(multi_train_lynx),
+    targets = tail(min_max_scale(multi_train_lynx),-7),
+    sequence_length = 7,
+  )
+pred_complete_train_multi_lynx<-best_model_multi_lynx%>%predict(complete_train_lynx)
+pred_complete_train_multi_lynx<-renormaliser(pred_complete_train_multi_lynx,min(multi_train_lynx),max(multi_train_lynx))*tail(predictions_arima_lynx,-7)
+mse_complete_train_multi_lynx<-mean((tail(train_d_lynx,-7)-pred_complete_train_multi_lynx)^2)
+```
+
+## Test data
+
+```{r}
+test<-test_d_lynx/pred_lynx$pred
+test_multi_no<-c(normalized_multi_train_lynx[94:100,1],min_max_scale(test))
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test_multi_no),
+  targets = min_max_scale(test_multi_no)[101:114],
+  sequence_length = 7,
+)
+test_multi_lynx<-best_model_multi_lynx%>%predict(test_dataset)
+test_multi_lynx<-renormaliser(test_multi_lynx,min(test),max(test))*pred_lynx$pred
+mse_multi_test_lynx<-mean((test_d_lynx-test_multi_lynx)^2)
+```
+
+
+## IBM data
+
+# Train our model
+```{r,include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- normalized_multi_train_ibm
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
+
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  train_sequence,
+    targets = tail(train_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = val_sequence,
+    targets = tail(val_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 6
+hidden_nodes<- 5 
+
+results_train_ibm_multi<-train_model(input_nodes,hidden_nodes)
+best_model_multi_ibm<-results_train_ibm_multi$Mdl
+mse_multi_train_ibm<- results_train_ibm_multi$MSE
+
+complete_train_ibm<-timeseries_dataset_from_array(
+    data =  min_max_scale(multi_train_ibm),
+    targets = tail(min_max_scale(multi_train_ibm),-6),
+    sequence_length = 6,
+  )
+pred_complete_train_multi_ibm<-best_model_multi_ibm%>%predict(complete_train_ibm)
+pred_complete_train_multi_ibm<-renormaliser(pred_complete_train_multi_ibm,min(multi_train_lynx),max(multi_train_ibm))*tail(predictions_arima_ibm,-6)
+mse_complete_train_multi_ibm<-mean((tail(train_d_ibm,-6)-pred_complete_train_multi_ibm)^2)
+```
+
+## Test data
+
+```{r}
+test<-test_d_ibm/pred_ibm$pred
+test_multi_no<-c(normalized_multi_train_ibm[294:299,1],min_max_scale(test))
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test_multi_no),
+  targets = min_max_scale(test_multi_no)[300:369],
+  sequence_length = 6,
+)
+test_multi_ibm<-best_model_multi_ibm%>%predict(test_dataset)
+test_multi_ibm<-renormaliser(test_multi_ibm,min(test),max(test))*pred_ibm$pred
+mse_multi_test_ibm<-mean((test_d_ibm-test_multi_ibm)^2)
+```
+
+## Sunspot data
+
+# Train our model
+```{r,include=FALSE}
+tensorflow::set_random_seed(123) #For the reproductibility
+train <- normalized_multi_train_sunspot
+# Define the number of folds for cross-validation
+num_folds <- 10
+set.seed(123)
+# Create a data partition for cross-validation
+index <-lapply(1:num_folds, function(i) ((i - 1) * 10 + 1):(i * 10))
+
+create_model <- function(input_nodes,hidden_nodes) {
+  set.seed(123)
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics="mae"
+  )
+  return(model)
+}
+
+best_mse<-100000
+cv_results1<-numeric(num_folds)
+
+train_model <- function(input_nodes, hidden_nodes) {
+  for (t in 1:10 ){
+    train_sequence <- train[-index[[t]], ]
+    val_sequence <- train[index[[t]], ]
+    
+    train_dataset <- timeseries_dataset_from_array(
+    data =  min_max_scale(train_sequence),
+    targets = tail(train_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    val_dataset <- timeseries_dataset_from_array(
+    data = val_sequence,
+    targets = tail(val_sequence,-input_nodes),
+    sequence_length = input_nodes,
+  )
+  
+    
+    # Create and train the model
+    model <- create_model(input_nodes, hidden_nodes)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+  
+    # Evaluate the model on the test set
+    predictions <- model %>% predict(val_dataset)
+    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence)) 
+    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    cv_results1[t]<-mse
+    if (mse<best_mse){
+      best_model <- model
+      best_mse<-mse}
+  }
+  
+  return(c(MSE = mean(cv_results1),Mdl=best_model))
+}
+
+input_nodes<- 4
+hidden_nodes<- 4
+
+results_train_sunspot_multi<-train_model(input_nodes,hidden_nodes)
+best_model_multi_sunspot<-results_train_sunspot_multi$Mdl
+mse_multi_train_sunspot<- results_train_sunspot_multi$MSE
+
+complete_train_sunspot<-timeseries_dataset_from_array(
+    data =  min_max_scale(multi_train_sunspot),
+    targets = tail(min_max_scale(multi_train_sunspot),-4),
+    sequence_length = 4,
+  )
+pred_complete_train_multi_sunspot<-best_model_multi_sunspot%>%predict(complete_train_sunspot)
+pred_complete_train_multi_sunspot<-renormaliser(pred_complete_train_multi_sunspot,min(multi_train_sunspot),max(multi_train_sunspot))*tail(predictions_arima_sunspot,-4)
+mse_complete_train_multi_sunspot<-mean((tail(train_d_sunspot,-4)-pred_complete_train_multi_sunspot)^2)
+```
+
+## Test data
+
+```{r}
+test<-test_d_sunspot/pred_sunspot$pred
+test_multi_no<-c(normalized_multi_train_sunspot[218:221,1],min_max_scale(test))
+test_dataset <- timeseries_dataset_from_array(
+  data = min_max_scale(test_multi_no),
+  targets = min_max_scale(test_multi_no)[222:288],
+  sequence_length = 4,
+)
+test_multi_sunspot<-best_model_multi_sunspot%>%predict(test_dataset)
+test_multi_sunspot<-renormaliser(test_multi_sunspot,min(test),max(test))*pred_sunspot$pred
+mse_multi_test_sunspot<-mean((test_d_sunspot-test_multi_sunspot)^2)
+```
+
+## 3. Plot graph between predictions and compare mse 
+
+## Lynx data 
+
+# Train data
+
+```{r}
+
+cat("MSE test ARIMA :",mse_arima_train_lynx,"\n")
+cat("MSE test ANN :",mse_complete_train_ann_lynx,"\n")
+cat("MSE test ADD :",mse_complete_train_add_lynx,"\n")
+cat("MSE test MULTI :",mse_complete_train_multi_lynx,"\n")
+
+
+```
+# Test data 
+
+```{r}
+
+cat("MSE test ARIMA :",mse_arima_test_lynx,"\n")
+cat("MSE test ANN :",mse_ann_test_lynx,"\n")
+cat("MSE test ADD :",mse_add_test_lynx,"\n")
+cat("MSE test MULTI :",mse_multi_test_lynx,"\n")
+
+
 
 ```
 
+## IBM data 
+
+# Train data
+
+```{r}
+
+cat("MSE test ARIMA :",mse_arima_train_ibm,"\n")
+cat("MSE test ANN :",mse_complete_train_ann_ibm,"\n")
+cat("MSE test ADD :",mse_complete_train_add_ibm,"\n")
+cat("MSE test MULTI :",mse_complete_train_multi_ibm,"\n")
+
+
+```
+# Test data 
+
+```{r}
+
+cat("MSE test ARIMA :",mse_arima_test_ibm,"\n")
+cat("MSE test ANN :",mse_ann_test_ibm,"\n")
+cat("MSE test ADD :",mse_add_test_ibm,"\n")
+cat("MSE test MULTI :",mse_multi_test_ibm,"\n")
+
+
+
+```
+
+## Sunspot data 
+
+# Train data
+
+```{r}
+
+cat("MSE test ARIMA :",mse_arima_train_sunspot,"\n")
+cat("MSE test ANN :",mse_complete_train_ann_sunspot,"\n")
+cat("MSE test ADD :",mse_complete_train_add_sunspot,"\n")
+cat("MSE test MULTI :",mse_complete_train_multi_sunspot,"\n")
+
+
+```
+# Test data 
+
+```{r}
+
+cat("MSE test ARIMA :",mse_arima_test_sunspot,"\n")
+cat("MSE test ANN :",mse_ann_test_sunspot,"\n")
+cat("MSE test ADD :",mse_add_test_sunspot,"\n")
+cat("MSE test MULTI :",mse_multi_test_sunspot,"\n")
+
+
+
+```
