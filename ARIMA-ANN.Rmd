@@ -5,21 +5,16 @@ date: "2024-03-15"
 ---
 
 # Installing the necessary package 
-```{r setup, include=FALSE}
+```{r, include=FALSE}
 set.seed(123)
-options(repos = c(CRAN = "https://cloud.r-project.org"))
 library(forecast)
 library(caret)
-install.packages("tfruns")
 library(tfruns)
 library(tensorflow)
 library(keras)
 library(tfdatasets)
 library(fma)
-
-Sys.setenv(TENSORFLOW_DEFAULT_GPU_DEVICE = "gpu")
-
-
+tensorflow::install_tensorflow()
 tensorflow::set_random_seed(123) #For the reproductibility of our ANN 
 ```
 
@@ -29,7 +24,7 @@ tensorflow::set_random_seed(123) #For the reproductibility of our ANN
 data_lynx<-log10(lynx)
 data(ibmclose)
 data_ibm<-ibmclose
-data_sunspot<-ts(sunspot.year[1:288])
+data_sunspot<-sunspot.year[1:288]
 
 plot.ts(data_lynx)
 plot.ts(data_ibm)
@@ -50,18 +45,44 @@ test_d_sunspot<-data_sunspot[222:288]
 
 ```
 
+
+
 ## Start with ARIMA models
 
 ```{r}
 ### ARIMA Lynx
 # Train_data
 ar_lynx<-arima(train_d_lynx,order=c(11,0,0))
+summary(ar_lynx)
 predictions_arima_lynx<-fitted(ar_lynx)
 mse_arima_train_lynx<-mean((predictions_arima_lynx[8:100]-train_d_lynx[8:100])^2) #For the comparaison with ANN models who take 7 inputs
 plot.ts(train_d_lynx)
 lines(predictions_arima_lynx,lty=2,col='red')
 
-# Test_data
+
+# Test_data One step
+
+train<-train_d_lynx
+test<-test_d_lynx
+ar<-ar_lynx
+forecasts_lynx <- numeric(length(test))
+
+for (i in 1:length(test)) {
+  # Forecast one step ahead
+  forecast_result <- forecast(ar, h=1)
+  # Extract the forecasted value for the next time step
+  forecasts_lynx[i] <- forecast_result$mean[1]
+  # Update the model with the actual value from the test data
+  train<-tail(train,-1)
+  
+  ar <- arima(c(train, test[1:i]), order=c(11,0,0))
+}
+
+mse_arima_test_lynx_1<-mean((forecasts_lynx-test_d_lynx)^2)
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(forecasts_lynx))))
+lines(data.frame(forecasts_lynx),lty=2,col='red',)
+
+# Test_data multi-step
 pred_lynx<-predict(ar_lynx,n.ahead=length(test_d_lynx))
 mse_arima_test_lynx<-mean((test_d_lynx-pred_lynx$pred)^2)
 plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(pred_lynx$pred))))
@@ -72,11 +93,34 @@ lines(data.frame(pred_lynx$pred),lty=2,col='red',)
 ```{r}
 ### ARIMA IBM
 # Train_data
+
 ar_ibm<-arima(train_d_ibm,order=c(1,1,2))
 predictions_arima_ibm<-fitted(ar_ibm)
 mse_arima_train_ibm<-mean((predictions_arima_ibm[7:299]-train_d_ibm[7:299])^2) #For the comparaison with ANN models who take 6 inputs
 plot.ts(train_d_ibm)
 lines(predictions_arima_ibm,lty=2,col='red')
+
+# Test_data One step
+
+train<-train_d_ibm
+test<-test_d_ibm
+ar<-ar_ibm
+forecasts_ibm <- numeric(length(test))
+
+for (i in 1:length(test)) {
+  # Forecast one step ahead
+  forecast_result <- forecast(ar, h=1)
+  # Extract the forecasted value for the next time step
+  forecasts_ibm[i] <- forecast_result$mean[1]
+  # Update the model with the actual value from the test data
+  train<-tail(train,-1)
+  
+  ar <- arima(c(train, test[1:i]), order=c(1,1,2))
+}
+
+mse_arima_test_ibm_1<-mean((forecasts_ibm-test_d_ibm)^2)
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(forecasts_ibm))))
+lines(data.frame(forecasts_ibm),lty=2,col='red',)
 
 # Test_data
 pred_ibm<-predict(ar_ibm,n.ahead=length(test_d_ibm))
@@ -93,6 +137,28 @@ predictions_arima_sunspot<-fitted(ar_sunspot)
 mse_arima_train_sunspot<-mean((predictions_arima_sunspot[5:100]-train_d_sunspot[5:100])^2) #For the comparaison with ANN models who take 4 inputs
 plot.ts(train_d_sunspot)
 lines(predictions_arima_sunspot,lty=2,col='red')
+
+# Test_data One step
+
+train<-train_d_sunspot
+test<-test_d_sunspot
+ar<-ar_sunspot
+forecasts_sunspot <- numeric(length(test))
+
+for (i in 1:length(test)) {
+  # Forecast one step ahead
+  forecast_result <- forecast(ar, h=1)
+  # Extract the forecasted value for the next time step
+  forecasts_sunspot[i] <- forecast_result$mean[1]
+  # Update the model with the actual value from the test data
+  train<-tail(train,-1)
+  
+  ar <- arima(c(train, test[1:i]), order=c(9,0,0))
+}
+
+mse_arima_test_sunspot_1<-mean((forecasts_sunspot-test_d_sunspot)^2)
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(forecasts_sunspot))))
+lines(data.frame(forecasts_sunspot),lty=2,col='red',)
 
 # Test_data
 pred_sunspot<-predict(ar_sunspot,n.ahead=length(test_d_sunspot))
@@ -114,7 +180,8 @@ min_max_scale <- function(x) {
 renormaliser <- function(x, min_val, max_val) {
   denormalized <- x * (max_val - min_val) + min_val
   return(denormalized)
-  }
+}
+
 ```
 
 ## Lynx data
@@ -175,6 +242,7 @@ train_model <- function(input_nodes, hidden_nodes) {
       epochs = 1000,
       shuffle=FALSE,
     )
+    
   
     # Evaluate the model on the test set
     predictions <- model %>% predict(val_dataset)
@@ -218,6 +286,9 @@ test_dataset <- timeseries_dataset_from_array(
 test_ann_lynx<-best_model_ann_lynx%>%predict(test_dataset)
 test_ann_lynx<-renormaliser(test_ann_lynx,min(test),max(test))
 mse_ann_test_lynx<-mean((test_d_lynx-test_ann_lynx)^2)
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(test_ann_lynx))))
+lines(data.frame(test_ann_lynx),lty=2,col='red',)
 ```
 
 ## IBM data
@@ -321,6 +392,9 @@ test_dataset <- timeseries_dataset_from_array(
 test_ann_ibm<-best_model_ann_ibm%>%predict(test_dataset)
 test_ann_ibm<-renormaliser(test_ann_ibm,min(test),max(test))
 mse_ann_test_ibm<-mean((test_d_ibm-test_ann_ibm)^2)
+
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(test_ann_ibm))))
+lines(data.frame(test_ann_ibm),lty=2,col='red',)
 ```
 
 ## Sunspot data
@@ -424,6 +498,9 @@ test_dataset <- timeseries_dataset_from_array(
 test_ann_sunspot<-best_model_ann_sunspot%>%predict(test_dataset)
 test_ann_sunspot<-renormaliser(test_ann_sunspot,min(test),max(test))
 mse_ann_test_sunspot<-mean((test_d_sunspot-test_ann_sunspot)^2)
+
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(test_ann_sunspot))))
+lines(data.frame(test_ann_sunspot),lty=2,col='red',)
 ```
 
 #### Second step : create the ANN-ARIMA model 
@@ -533,8 +610,7 @@ train_model <- function(input_nodes, hidden_nodes) {
   
     # Evaluate the model on the test set
     predictions <- model %>% predict(val_dataset)
-    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
-    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    mse <- mean((predictions - tail(val_sequence,-input_nodes))^2)
     cv_results1[t]<-mse
     if (mse<best_mse){
       best_model <- model
@@ -565,16 +641,19 @@ mse_complete_train_add_lynx<-mean((tail(train_d_lynx,-7)-pred_complete_train_add
 ## Test data
 
 ```{r}
-test<-test_d_lynx -pred_lynx$pred
+test<-test_d_lynx-forecasts_lynx
 test_add_no<-c(normalized_add_train_lynx[94:100,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = min_max_scale(test_add_no),
-  targets = min_max_scale(test_add_no)[101:114],
+  data = test_add_no,
+  targets = test_add_no[101:114],
   sequence_length = 7,
 )
 test_add_lynx<-best_model_add_lynx%>%predict(test_dataset)
-test_add_lynx<-renormaliser(test_add_lynx,min(test),max(test))+pred_lynx$pred
+test_add_lynx<-renormaliser(test_add_lynx,min(test),max(test))+forecasts_lynx
 mse_add_test_lynx<-mean((test_d_lynx-test_add_lynx)^2)
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(test_add_lynx))))
+lines(data.frame(test_add_lynx),lty=2,col='red',)
 ```
 
 ## IBM data
@@ -638,8 +717,7 @@ train_model <- function(input_nodes, hidden_nodes) {
   
     # Evaluate the model on the test set
     predictions <- model %>% predict(val_dataset)
-    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence)) 
-    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    mse <- mean((predictions - tail(val_sequence,-input_nodes))^2)
     cv_results1[t]<-mse
     if (mse<best_mse){
       best_model <- model
@@ -669,16 +747,19 @@ mse_complete_train_add_ibm<-mean((tail(train_d_ibm,-6)-pred_complete_train_add_i
 ## Test data
 
 ```{r}
-test<-test_d_ibm-pred_ibm$pred
+test<-test_d_ibm-forecasts_ibm
 test_add_no<-c(normalized_add_train_ibm[294:299,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = min_max_scale(test_add_no),
-  targets = min_max_scale(test_add_no)[300:369],
+  data = test_add_no,
+  targets = test_add_no[300:369],
   sequence_length = 6,
 )
 test_add_ibm<-best_model_add_ibm%>%predict(test_dataset)
-test_add_ibm<-renormaliser(test_add_ibm,min(test),max(test))+pred_ibm$pred
+test_add_ibm<-renormaliser(test_add_ibm,min(test),max(test))+forecasts_ibm
 mse_add_test_ibm<-mean((test_d_ibm-test_add_ibm)^2)
+
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(test_add_ibm))))
+lines(data.frame(test_add_ibm),lty=2,col='red',)
 ```
 
 ## Sunspot data
@@ -742,8 +823,7 @@ train_model <- function(input_nodes, hidden_nodes) {
   
     # Evaluate the model on the test set
     predictions <- model %>% evaluate(val_dataset)
-    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence)) 
-    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    mse <- mean((predictions - tail(val_sequence,-input_nodes))^2)
     cv_results1[t]<-mse
     if (mse<best_mse){
       best_model <- model}
@@ -772,16 +852,19 @@ mse_complete_train_add_sunspot<-mean((tail(train_d_sunspot,-4)-pred_complete_tra
 ## Test data
 
 ```{r}
-test<-test_d_sunspot-pred_sunspot$pred
+test<-test_d_sunspot-forecasts_sunspot
 test_add_no<-c(normalized_add_train_sunspot[218:221,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = min_max_scale(test_add_no),
-  targets = min_max_scale(test_add_no)[222:288],
+  data = test_add_no,
+  targets = test_add_no[222:288],
   sequence_length = 4,
 )
 test_add_sunspot<-best_model_add_sunspot%>%predict(test_dataset)
-test_add_sunspot<-renormaliser(test_add_sunspot,min(test),max(test))+pred_sunspot$pred
+test_add_sunspot<-renormaliser(test_add_sunspot,min(test),max(test))+forecasts_sunspot
 mse_add_test_sunspot<-mean((test_d_sunspot-test_add_sunspot)^2)
+
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(test_add_sunspot))))
+lines(data.frame(test_add_sunspot),lty=2,col='red',)
 ```
 
 ### Multiplicative model Now 
@@ -848,8 +931,7 @@ train_model <- function(input_nodes, hidden_nodes) {
   
     # Evaluate the model on the test set
     predictions <- model %>% predict(val_dataset)
-    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
-    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    mse <- mean((predictions - tail(val_sequence,-input_nodes))^2)
     cv_results1[t]<-mse
     if (mse<best_mse){
       best_model <- model
@@ -874,21 +956,25 @@ complete_train_lynx<-timeseries_dataset_from_array(
 pred_complete_train_multi_lynx<-best_model_multi_lynx%>%predict(complete_train_lynx)
 pred_complete_train_multi_lynx<-renormaliser(pred_complete_train_multi_lynx,min(multi_train_lynx),max(multi_train_lynx))*tail(predictions_arima_lynx,-7)
 mse_complete_train_multi_lynx<-mean((tail(train_d_lynx,-7)-pred_complete_train_multi_lynx)^2)
+
 ```
 
 ## Test data
 
 ```{r}
-test<-test_d_lynx/pred_lynx$pred
+test<-test_d_lynx/forecasts_lynx
 test_multi_no<-c(normalized_multi_train_lynx[94:100,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = min_max_scale(test_multi_no),
-  targets = min_max_scale(test_multi_no)[101:114],
+  data = test_multi_no,
+  targets = test_multi_no[101:114],
   sequence_length = 7,
 )
 test_multi_lynx<-best_model_multi_lynx%>%predict(test_dataset)
-test_multi_lynx<-renormaliser(test_multi_lynx,min(test),max(test))*pred_lynx$pred
+test_multi_lynx<-renormaliser(test_multi_lynx,min(test),max(test))*forecasts_lynx
 mse_multi_test_lynx<-mean((test_d_lynx-test_multi_lynx)^2)
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(test_multi_lynx))))
+lines(data.frame(test_multi_lynx),lty=2,col='red',)
 ```
 
 
@@ -953,8 +1039,7 @@ train_model <- function(input_nodes, hidden_nodes) {
   
     # Evaluate the model on the test set
     predictions <- model %>% predict(val_dataset)
-    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence))
-    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    mse <- mean((predictions - tail(val_sequence,-input_nodes))^2)
     cv_results1[t]<-mse
     if (mse<best_mse){
       best_model <- model
@@ -977,23 +1062,27 @@ complete_train_ibm<-timeseries_dataset_from_array(
     sequence_length = 6,
   )
 pred_complete_train_multi_ibm<-best_model_multi_ibm%>%predict(complete_train_ibm)
-pred_complete_train_multi_ibm<-renormaliser(pred_complete_train_multi_ibm,min(multi_train_lynx),max(multi_train_ibm))*tail(predictions_arima_ibm,-6)
+pred_complete_train_multi_ibm<-renormaliser(pred_complete_train_multi_ibm,min(multi_train_ibm),max(multi_train_ibm))*tail(predictions_arima_ibm,-6)
 mse_complete_train_multi_ibm<-mean((tail(train_d_ibm,-6)-pred_complete_train_multi_ibm)^2)
+
 ```
 
 ## Test data
 
 ```{r}
-test<-test_d_ibm/pred_ibm$pred
+test<-test_d_ibm/forecasts_ibm
 test_multi_no<-c(normalized_multi_train_ibm[294:299,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = min_max_scale(test_multi_no),
-  targets = min_max_scale(test_multi_no)[300:369],
+  data = test_multi_no,
+  targets = test_multi_no[300:369],
   sequence_length = 6,
 )
 test_multi_ibm<-best_model_multi_ibm%>%predict(test_dataset)
-test_multi_ibm<-renormaliser(test_multi_ibm,min(test),max(test))*pred_ibm$pred
+test_multi_ibm<-renormaliser(test_multi_ibm,min(test),max(test))*forecasts_ibm
 mse_multi_test_ibm<-mean((test_d_ibm-test_multi_ibm)^2)
+
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(test_multi_ibm))))
+lines(data.frame(test_multi_ibm),lty=2,col='red',)
 ```
 
 ## Sunspot data
@@ -1057,8 +1146,7 @@ train_model <- function(input_nodes, hidden_nodes) {
   
     # Evaluate the model on the test set
     predictions <- model %>% predict(val_dataset)
-    pred_final<-renormaliser(predictions,min(val_sequence), max(val_sequence)) 
-    mse <- mean((pred_final - tail(val_sequence,-input_nodes))^2)
+    mse <- mean((predictions - tail(val_sequence,-input_nodes))^2)
     cv_results1[t]<-mse
     if (mse<best_mse){
       best_model <- model
@@ -1088,16 +1176,20 @@ mse_complete_train_multi_sunspot<-mean((tail(train_d_sunspot,-4)-pred_complete_t
 ## Test data
 
 ```{r}
-test<-test_d_sunspot/pred_sunspot$pred
+test<-test_d_sunspot/forecasts_sunspot
 test_multi_no<-c(normalized_multi_train_sunspot[218:221,1],min_max_scale(test))
 test_dataset <- timeseries_dataset_from_array(
-  data = min_max_scale(test_multi_no),
-  targets = min_max_scale(test_multi_no)[222:288],
+  data = test_multi_no,
+  targets = test_multi_no[222:288],
   sequence_length = 4,
 )
 test_multi_sunspot<-best_model_multi_sunspot%>%predict(test_dataset)
-test_multi_sunspot<-renormaliser(test_multi_sunspot,min(test),max(test))*pred_sunspot$pred
+test_multi_sunspot<-renormaliser(test_multi_sunspot,min(test),max(test))*forecasts_sunspot
 mse_multi_test_sunspot<-mean((test_d_sunspot-test_multi_sunspot)^2)
+png("multi_sunspot.png")
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(test_multi_sunspot))))
+lines(data.frame(test_multi_sunspot),lty=2,col='red',)
+dev.off()
 ```
 
 ## 3. Plot graph between predictions and compare mse 
@@ -1108,10 +1200,10 @@ mse_multi_test_sunspot<-mean((test_d_sunspot-test_multi_sunspot)^2)
 
 ```{r}
 
-cat("MSE test ARIMA :",mse_arima_train_lynx,"\n")
-cat("MSE test ANN :",mse_complete_train_ann_lynx,"\n")
-cat("MSE test ADD :",mse_complete_train_add_lynx,"\n")
-cat("MSE test MULTI :",mse_complete_train_multi_lynx,"\n")
+cat("MSE train ARIMA :",mse_arima_train_lynx,"\n")
+cat("MSE train ANN :",mse_complete_train_ann_lynx,"\n")
+cat("MSE train ADD :",mse_complete_train_add_lynx,"\n")
+cat("MSE train MULTI :",mse_complete_train_multi_lynx,"\n")
 
 
 ```
@@ -1119,7 +1211,7 @@ cat("MSE test MULTI :",mse_complete_train_multi_lynx,"\n")
 
 ```{r}
 
-cat("MSE test ARIMA :",mse_arima_test_lynx,"\n")
+cat("MSE test ARIMA :",mse_arima_test_lynx_1,"\n")
 cat("MSE test ANN :",mse_ann_test_lynx,"\n")
 cat("MSE test ADD :",mse_add_test_lynx,"\n")
 cat("MSE test MULTI :",mse_multi_test_lynx,"\n")
@@ -1134,10 +1226,10 @@ cat("MSE test MULTI :",mse_multi_test_lynx,"\n")
 
 ```{r}
 
-cat("MSE test ARIMA :",mse_arima_train_ibm,"\n")
-cat("MSE test ANN :",mse_complete_train_ann_ibm,"\n")
-cat("MSE test ADD :",mse_complete_train_add_ibm,"\n")
-cat("MSE test MULTI :",mse_complete_train_multi_ibm,"\n")
+cat("MSE train ARIMA :",mse_arima_train_ibm,"\n")
+cat("MSE train ANN :",mse_complete_train_ann_ibm,"\n")
+cat("MSE train ADD :",mse_complete_train_add_ibm,"\n")
+cat("MSE train MULTI :",mse_complete_train_multi_ibm,"\n")
 
 
 ```
@@ -1145,7 +1237,7 @@ cat("MSE test MULTI :",mse_complete_train_multi_ibm,"\n")
 
 ```{r}
 
-cat("MSE test ARIMA :",mse_arima_test_ibm,"\n")
+cat("MSE test ARIMA :",mse_arima_test_ibm_1,"\n")
 cat("MSE test ANN :",mse_ann_test_ibm,"\n")
 cat("MSE test ADD :",mse_add_test_ibm,"\n")
 cat("MSE test MULTI :",mse_multi_test_ibm,"\n")
@@ -1160,10 +1252,10 @@ cat("MSE test MULTI :",mse_multi_test_ibm,"\n")
 
 ```{r}
 
-cat("MSE test ARIMA :",mse_arima_train_sunspot,"\n")
-cat("MSE test ANN :",mse_complete_train_ann_sunspot,"\n")
-cat("MSE test ADD :",mse_complete_train_add_sunspot,"\n")
-cat("MSE test MULTI :",mse_complete_train_multi_sunspot,"\n")
+cat("MSE train ARIMA :",mse_arima_train_sunspot,"\n")
+cat("MSE train ANN :",mse_complete_train_ann_sunspot,"\n")
+cat("MSE train ADD :",mse_complete_train_add_sunspot,"\n")
+cat("MSE train MULTI :",mse_complete_train_multi_sunspot,"\n")
 
 
 ```
@@ -1171,7 +1263,7 @@ cat("MSE test MULTI :",mse_complete_train_multi_sunspot,"\n")
 
 ```{r}
 
-cat("MSE test ARIMA :",mse_arima_test_sunspot,"\n")
+cat("MSE test ARIMA :",mse_arima_test_sunspot_1,"\n")
 cat("MSE test ANN :",mse_ann_test_sunspot,"\n")
 cat("MSE test ADD :",mse_add_test_sunspot,"\n")
 cat("MSE test MULTI :",mse_multi_test_sunspot,"\n")
@@ -1179,3 +1271,42 @@ cat("MSE test MULTI :",mse_multi_test_sunspot,"\n")
 
 
 ```
+```{r}
+## TRAIN
+# Création des données
+ADD <- c(mse_complete_train_add_lynx,mse_complete_train_add_ibm,mse_complete_train_add_sunspot)
+MULTI <- c(mse_complete_train_multi_lynx,54.022,197.89)
+ANN <- c(mse_complete_train_ann_lynx,mse_complete_train_ann_ibm,mse_complete_train_ann_sunspot)
+ARIMA<-c(mse_arima_train_lynx,mse_arima_train_ibm,mse_arima_train_sunspot)
+
+# Création du dataframe
+resultats_train <- data.frame(ARIMA=ARIMA, ANN=ANN, ADD=ADD,MULTI=MULTI)
+
+# Définir les noms pour les lignes
+rownames(resultats_train) <- c("Lynx", "IBM", "Sunspot")
+
+# Affichage du tableau
+print(resultats_train)
+
+write.csv(resultats_train, "resultats_train.csv")
+```
+```{r}
+## TEST
+# Création des données
+ADD <- c(mse_add_test_lynx,mse_add_test_ibm,mse_add_test_sunspot)
+MULTI <- c(mse_multi_test_lynx,54.3615,941.82)
+ANN <- c(mse_ann_test_lynx,mse_ann_test_ibm,mse_ann_test_sunspot)
+ARIMA<-c(mse_arima_test_lynx_1,mse_arima_test_ibm_1,mse_arima_test_sunspot_1)
+
+# Création du dataframe
+resultats_test <- data.frame(ARIMA=ARIMA, ANN=ANN, ADD=ADD,MULTI=MULTI)
+
+# Définir les noms pour les lignes
+rownames(resultats_test) <- c("Lynx", "IBM", "Sunspot")
+
+# Affichage du tableau
+print(resultats_test)
+
+write.csv(resultats_test, "resultats_test.csv")
+```
+
