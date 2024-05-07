@@ -1,0 +1,1076 @@
+---
+title: "PJ"
+output: html_document
+date: "2024-05-01"
+---
+
+```{r setup, include=FALSE}
+library(forecast)
+library(caret)
+library(tfruns)
+library(tensorflow)
+library(keras)
+library(tfdatasets)
+library(fma)
+tensorflow::set_random_seed(123)
+```
+
+# Upload the same data as the paper 
+```{r}
+data_lynx<-log10(lynx)
+data(ibmclose)
+data_ibm<-ibmclose
+data_sunspot<-sunspot.year
+
+plot.ts(lynx)
+plot.ts(ibmclose)
+plot.ts(sunspot.year)
+
+```
+
+## Split into train_data and test_data
+
+# Lynx data
+```{r}
+# Assuming 'your_data' is your time series data
+set.seed(123)  # Set seed for reproducibility
+
+# Specify the percentage of data for training
+train_percentage <- 0.8
+
+# Calculate the index for splitting
+split_index <- floor(NROW(data_lynx) * train_percentage)
+
+# Split the time series into training and testing sets
+train_d_lynx <- data_lynx[1:split_index]
+test_d_lynx <- data_lynx[(split_index + 1):length(data_lynx)]
+
+# Print the training and testing sets
+plot.ts(train_d_lynx)
+plot.ts(test_d_lynx)
+```
+
+# Ibm data 
+
+```{r}
+# Assuming 'your_data' is your time series data
+set.seed(123)  # Set seed for reproducibility
+
+# Specify the percentage of data for training
+train_percentage <- 0.8
+
+# Calculate the index for splitting
+split_index <- floor(NROW(data_ibm) * train_percentage)
+
+# Split the time series into training and testing sets
+train_d_ibm <- data_ibm[1:split_index]
+test_d_ibm <- data_ibm[(split_index + 1):length(data_ibm)]
+
+# Print the training and testing sets
+plot.ts(train_d_ibm)
+plot.ts(test_d_ibm)
+```
+
+
+# sunspot data 
+
+```{r}
+# Assuming 'your_data' is your time series data
+set.seed(123)  # Set seed for reproducibility
+
+# Specify the percentage of data for training
+train_percentage <- 0.8
+
+# Calculate the index for splitting
+split_index <- floor(NROW(data_sunspot) * train_percentage)
+
+# Split the time series into training and testing sets
+train_d_sunspot <- data_sunspot[1:split_index]
+test_d_sunspot <- data_sunspot[(split_index + 1):length(data_sunspot)]
+
+# Print the training and testing sets
+plot.ts(train_d_sunspot)
+plot.ts(test_d_sunspot)
+```
+
+## Start ANN
+
+# Implemente function we need  
+
+```{r}
+normalize <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+  
+denormalize <- function(x, min_val, max_val) {
+  denormalized <- x * (max_val - min_val) + min_val
+  return(denormalized)
+}
+```
+
+# Create our model ANN 
+
+```{r}
+create_model <- function(input_nodes,hidden_nodes) {
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "sgd",
+    loss = "mse",
+  )
+  return(model)
+}
+
+```
+
+# Lynx
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_d_lynx),
+    targets = tail(normalize(train_d_lynx),-5),
+    sequence_length = 5,
+  )
+library(tfdatasets) 
+
+dummy_dataset_iterator <- as_array_iterator(train_dataset) 
+
+
+
+repeat { 
+
+batch <- iter_next(dummy_dataset_iterator) 
+
+if (is.null(batch)) # iterator exhausted 
+
+ break 
+
+c(inputs, targets) %<-% batch 
+
+for (r in 1:nrow(inputs)) 
+
+ cat(sprintf("input: [ %s ]  target: %s\n", 
+
+             paste(inputs[r,], collapse = " "), targets[r])) 
+
+cat("---------------------------\n") # demark batchs 
+
+} 
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_ann_lynx<-model %>% predict(train_dataset)
+pred_train_ann_lynx<-denormalize(pred_train_ann_lynx,min(train_d_lynx),max(train_d_lynx))
+
+## Caculs metrics
+
+mse_train_ann_lynx<-mean((tail(train_d_lynx,-5)-pred_train_ann_lynx)^2)
+
+mae_train_ann_lynx <- mean(abs(tail(train_d_lynx, -5) - pred_train_ann_lynx))
+
+mape_train_ann_lynx <- mean(abs((tail(train_d_lynx, -5) - pred_train_ann_lynx) / tail(train_d_lynx, -5))) * 100
+```
+
+```{r}
+test<-data_lynx[87:114]
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_d_lynx),
+  sequence_length = 5,
+)
+test_ann_lynx<-model%>%predict(test_dataset)
+test_ann_lynx<-denormalize(test_ann_lynx,min(test),max(test))
+
+mse_ann_test_lynx<-mean((test_d_lynx-test_ann_lynx)^2)
+
+mae_ann_test_lynx <- mean(abs(test_d_lynx - test_ann_lynx))
+
+mape_ann_test_lynx <- mean(abs((test_d_lynx - test_ann_lynx) / test_d_lynx)) * 100
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(test_ann_lynx))))
+lines(data.frame(test_ann_lynx),lty=2,col='red',)
+```
+
+# IBM 
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_d_ibm),
+    targets = tail(normalize(train_d_ibm),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_ann_ibm<-model %>% predict(train_dataset)
+pred_train_ann_ibm<-denormalize(pred_train_ann_ibm,min(train_d_ibm),max(train_d_ibm))
+
+## Caculs metrics
+
+mse_train_ann_ibm<-mean((tail(train_d_ibm,-5)-pred_train_ann_ibm)^2)
+
+mae_train_ann_ibm <- mean(abs(tail(train_d_ibm, -5) - pred_train_ann_ibm))
+
+mape_train_ann_ibm <- mean(abs((tail(train_d_ibm, -5) - pred_train_ann_ibm) / tail(train_d_ibm, -5))) * 100
+```
+
+```{r}
+test<-data_ibm[291:369]
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_d_ibm),
+  sequence_length = 5,
+)
+test_ann_ibm<-model%>%predict(test_dataset)
+test_ann_ibm<-denormalize(test_ann_ibm,min(test),max(test))
+
+mse_ann_test_ibm<-mean((test_d_ibm-test_ann_ibm)^2)
+
+mae_ann_test_ibm <- mean(abs(test_d_ibm - test_ann_ibm))
+
+mape_ann_test_ibm <- mean(abs((test_d_ibm - test_ann_ibm) / test_d_ibm)) * 100
+
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(test_ann_ibm))))
+lines(data.frame(test_ann_ibm),lty=2,col='red',)
+```
+
+# Sunspot
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_d_sunspot),
+    targets = tail(normalize(train_d_sunspot),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_ann_sunspot<-model %>% predict(train_dataset)
+pred_train_ann_sunspot<-denormalize(pred_train_ann_sunspot,min(train_d_sunspot),max(train_d_sunspot))
+
+## Caculs metrics
+
+mse_train_ann_sunspot<-mean((tail(train_d_sunspot,-5)-pred_train_ann_sunspot)^2)
+
+mae_train_ann_sunspot <- mean(abs(tail(train_d_sunspot, -5) - pred_train_ann_sunspot))
+
+mape_train_ann_sunspot <- mean(abs((tail(train_d_sunspot, -5) - pred_train_ann_sunspot) / tail(train_d_sunspot, -5))) * 100
+```
+
+```{r}
+test<-data_sunspot[227:289]
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_d_sunspot),
+  sequence_length = 5,
+)
+test_ann_sunspot<-model%>%predict(test_dataset)
+test_ann_sunspot<-denormalize(test_ann_sunspot,min(test),max(test))
+
+mse_ann_test_sunspot<-mean((test_d_sunspot-test_ann_sunspot)^2)
+
+mae_ann_test_sunspot <- mean(abs(test_d_sunspot - test_ann_sunspot))
+
+mape_ann_test_sunspot <- mean(abs((test_d_sunspot - test_ann_sunspot) / test_d_sunspot)) * 100
+
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(test_ann_sunspot))))
+lines(data.frame(test_ann_sunspot),lty=2,col='red',)
+```
+## ARIMA now
+
+# Lynx
+
+```{r}
+
+### Train_data
+## model
+ar_lynx<-arima(train_d_lynx,order=c(11,0,0)) # Like basic paper
+summary(ar_lynx)
+predictions_arima_lynx<-fitted(ar_lynx)
+
+## Metrics
+
+mse_arima_train_lynx<-mean((predictions_arima_lynx[6:91]-train_d_lynx[6:91])^2)
+
+mae_arima_train_lynx <- mean(abs(predictions_arima_lynx[6:91] - train_d_lynx[6:91]))
+
+mape_arima_train_lynx <- mean(abs(predictions_arima_lynx[6:91] - train_d_lynx[6:91]) / abs(train_d_lynx[6:91])) * 100
+# provisoire
+
+## Graphics
+
+# Convertir les données en data frame
+train_df_lynx <- data.frame(time = time(train_d_lynx), value = train_d_lynx)
+predictions_df_lynx <- data.frame(time = time(predictions_arima_lynx), value = predictions_arima_lynx)
+
+# Créer le graphique avec ggplot
+ggplot() +
+  geom_line(data = train_df_lynx, aes(x = time, y = value, color = "Observations")) +
+  geom_line(data = predictions_df_lynx, aes(x = time, y = value, color = "Predictions"), linetype = "dashed") +
+  labs(x = "Time", y = "Value", title = "Observations vs Predictions") +
+  scale_color_manual(values = c("black", "red"), guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+
+### Test_data One step
+
+## Model
+ar<-ar_lynx
+forecasts_lynx <- numeric(length(test_d_lynx))
+
+for (i in 1:length(test_d_lynx)) {
+  # Forecast one step ahead
+  forecast_result <- forecast(ar, h=1)
+  # Extract the forecasted value for the next time step
+  forecasts_lynx[i] <- forecast_result$mean[1]
+  # Update the model with the actual value from the test data
+  ar <- arima(c(train_d_lynx, test_d_lynx[1:i]),order=c(11,0,0))
+}
+
+## Metrics 
+mse_arima_test_lynx<-mean((forecasts_lynx-test_d_lynx)^2)
+
+mae_arima_test_lynx <- mean(abs(forecasts_lynx - test_d_lynx))
+
+mape_arima_test_lynx <- mean(abs(forecasts_lynx - test_d_lynx) / abs(test_d_lynx)) * 100
+
+## Graphics
+
+# Créer un data frame avec les données d'observation et de prévision
+df <- data.frame(
+  time = 1:length(test_d_lynx), # Utiliser simplement les indices pour représenter le temps
+  observations = test_d_lynx,
+  predictions = forecasts_lynx
+)
+
+
+# Créer le graphique avec ggplot
+ggplot(df) +
+  geom_line(aes(x = time, y = observations, color = "Observations")) +
+  geom_line(aes(x = time, y = predictions, color = "Predictions"), linetype = "dashed") +
+  labs(x = "Time", y = "Value", title = "Observations vs Predictions") +
+  scale_color_manual(values = c("black", "red"), guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+
+```
+
+# IBM
+
+```{r}
+
+### Train_data
+## model
+ar_ibm<-arima(train_d_ibm,order=c(1,1,2)) # Like basic paper
+summary(ar_ibm)
+predictions_arima_ibm<-fitted(ar_ibm)
+
+## Metrics
+
+mse_arima_train_ibm<-mean((predictions_arima_ibm[6:295]-train_d_ibm[6:295])^2)
+
+mae_arima_train_ibm <- mean(abs(predictions_arima_ibm[6:295] - train_d_ibm[6:295]))
+
+mape_arima_train_ibm <- mean(abs(predictions_arima_ibm[6:295] - train_d_ibm[6:295]) / abs(train_d_ibm[6:295])) * 100
+# provisoire
+
+## Graphics
+
+# Convertir les données en data frame
+train_df_ibm <- data.frame(time = time(train_d_ibm), value = train_d_ibm)
+predictions_df_ibm <- data.frame(time = time(predictions_arima_ibm), value = predictions_arima_ibm)
+
+# Créer le graphique avec ggplot
+ggplot() +
+  geom_line(data = train_df_ibm, aes(x = time, y = value, color = "Observations")) +
+  geom_line(data = predictions_df_ibm, aes(x = time, y = value, color = "Predictions"), linetype = "dashed") +
+  labs(x = "Time", y = "Value", title = "Observations vs Predictions") +
+  scale_color_manual(values = c("black", "red"), guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+
+### Test_data One step
+
+## Model
+ar<-ar_ibm
+forecasts_ibm <- numeric(length(test_d_ibm))
+
+for (i in 1:length(test_d_ibm)) {
+  # Forecast one step ahead
+  forecast_result <- forecast(ar, h=1)
+  # Extract the forecasted value for the next time step
+  forecasts_ibm[i] <- forecast_result$mean[1]
+  # Update the model with the actual value from the test data
+  
+  ar <- arima(c(train_d_ibm, test_d_ibm[1:i]),order=c(1,1,2))
+}
+
+## Metrics 
+mse_arima_test_ibm<-mean((forecasts_ibm-test_d_ibm)^2)
+
+mae_arima_test_ibm <- mean(abs(forecasts_ibm - test_d_ibm))
+
+mape_arima_test_ibm <- mean(abs(forecasts_ibm - test_d_ibm) / abs(test_d_ibm)) * 100
+
+## Graphics
+
+# Créer un data frame avec les données d'observation et de prévision
+df <- data.frame(
+  time = 1:length(test_d_ibm), # Utiliser simplement les indices pour représenter le temps
+  observations = test_d_ibm,
+  predictions = forecasts_ibm
+)
+
+
+# Créer le graphique avec ggplot
+ggplot(df) +
+  geom_line(aes(x = time, y = observations, color = "Observations")) +
+  geom_line(aes(x = time, y = predictions, color = "Predictions"), linetype = "dashed") +
+  labs(x = "Time", y = "Value", title = "Observations vs Predictions") +
+  scale_color_manual(values = c("black", "red"), guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+
+```
+# Sunspot
+
+```{r}
+
+### Train_data
+## model
+ar_sunspot<-arima(train_d_sunspot,order=c(9,0,0)) # Like basic paper
+summary(ar_sunspot)
+predictions_arima_sunspot<-fitted(ar_sunspot)
+
+## Metrics
+
+mse_arima_train_sunspot<-mean((predictions_arima_sunspot[6:231]-train_d_sunspot[6:231])^2)
+
+mae_arima_train_sunspot <- mean(abs(predictions_arima_sunspot[6:231] - train_d_sunspot[6:231]))
+
+mape_arima_train_sunspot <- mean(abs(predictions_arima_sunspot[6:231] - train_d_sunspot[6:231]) / abs(train_d_sunspot[6:231])) * 100
+# provisoire
+
+## Graphics
+
+# Convertir les données en data frame
+train_df_sunspot <- data.frame(time = time(train_d_sunspot), value = train_d_sunspot)
+predictions_df_sunspot <- data.frame(time = time(predictions_arima_sunspot), value = predictions_arima_sunspot)
+
+# Créer le graphique avec ggplot
+ggplot() +
+  geom_line(data = train_df_sunspot, aes(x = time, y = value, color = "Observations")) +
+  geom_line(data = predictions_df_sunspot, aes(x = time, y = value, color = "Predictions"), linetype = "dashed") +
+  labs(x = "Time", y = "Value", title = "Observations vs Predictions") +
+  scale_color_manual(values = c("black", "red"), guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+
+### Test_data One step
+
+## Model
+ar<-ar_sunspot
+forecasts_sunspot <- numeric(length(test_d_sunspot))
+
+for (i in 1:length(test_d_sunspot)) {
+  # Forecast one step ahead
+  forecast_result <- forecast(ar, h=1)
+  # Extract the forecasted value for the next time step
+  forecasts_sunspot[i] <- forecast_result$mean[1]
+  # Update the model with the actual value from the test data
+  
+  ar <- arima(c(train_d_sunspot, test_d_sunspot[1:i]),order=c(9,0,0))
+}
+
+## Metrics 
+mse_arima_test_sunspot<-mean((forecasts_sunspot-test_d_sunspot)^2)
+
+mae_arima_test_sunspot <- mean(abs(forecasts_sunspot - test_d_sunspot))
+
+mape_arima_test_sunspot <- mean(abs(forecasts_sunspot - test_d_sunspot) / abs(test_d_sunspot)) * 100
+
+## Graphics
+
+# Créer un data frame avec les données d'observation et de prévision
+df <- data.frame(
+  time = 1:length(test_d_sunspot), # Utiliser simplement les indices pour représenter le temps
+  observations = test_d_sunspot,
+  predictions = forecasts_sunspot
+)
+
+
+# Créer le graphique avec ggplot
+ggplot(df) +
+  geom_line(aes(x = time, y = observations, color = "Observations")) +
+  geom_line(aes(x = time, y = predictions, color = "Predictions"), linetype = "dashed") +
+  labs(x = "Time", y = "Value", title = "Observations vs Predictions") +
+  scale_color_manual(values = c("black", "red"), guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+
+```
+
+## Hybrid model 
+
+# Additif model
+
+```{r}
+# preparation
+
+train_add_lynx<-train_d_lynx-predictions_arima_lynx
+test_add_lynx<-test_d_lynx-forecasts_lynx
+
+train_add_ibm<-train_d_ibm-predictions_arima_ibm
+test_add_ibm<-test_d_ibm-forecasts_ibm
+
+train_add_sunspot<-train_d_sunspot-predictions_arima_sunspot
+test_add_sunspot<-test_d_sunspot-forecasts_sunspot
+```
+
+# Lynx
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_add_lynx),
+    targets = tail(normalize(train_add_lynx),-5),
+    sequence_length = 5,
+  )
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_add_lynx<-model %>% predict(train_dataset)
+pred_train_add_lynx<-denormalize(pred_train_add_lynx,min(train_add_lynx),max(train_add_lynx))
+pred_train_add_lynx<-predictions_arima_lynx[6:91]+pred_train_add_lynx
+
+## Caculs metrics
+
+mse_train_add_lynx<-mean((tail(train_d_lynx,-5)-pred_train_add_lynx)^2)
+
+mae_train_add_lynx <- mean(abs(tail(train_d_lynx, -5) - pred_train_add_lynx))
+
+mape_train_add_lynx <- mean(abs((tail(train_d_lynx, -5) - pred_train_add_lynx) / tail(train_d_lynx, -5))) * 100
+```
+
+```{r}
+test<-c(train_add_lynx[87:91],test_add_lynx)
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_add_lynx),
+  sequence_length = 5,
+)
+pred_test_add_lynx<-model%>%predict(test_dataset)
+pred_test_add_lynx<-denormalize(pred_test_add_lynx,min(test),max(test))
+pred_test_add_lynx<-pred_test_add_lynx+forecasts_lynx
+
+mse_add_test_lynx<-mean((test_d_lynx-pred_test_add_lynx)^2)
+
+mae_add_test_lynx <- mean(abs(test_d_lynx - pred_test_add_lynx))
+
+mape_add_test_lynx <- mean(abs((test_d_lynx - pred_test_add_lynx) / test_d_lynx)) * 100
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(pred_test_add_lynx))))
+lines(data.frame(pred_test_add_lynx),lty=2,col='red',)
+```
+
+# IBM
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_add_ibm),
+    targets = tail(normalize(train_add_ibm),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_add_ibm<-model %>% predict(train_dataset)
+pred_train_add_ibm<-denormalize(pred_train_add_ibm,min(train_add_ibm),max(train_add_ibm))
+pred_train_add_ibm<-predictions_arima_ibm[6:295]+pred_train_add_ibm
+
+## Caculs metrics
+
+mse_train_add_ibm<-mean((tail(train_d_ibm,-5)-pred_train_add_ibm)^2)
+
+mae_train_add_ibm <- mean(abs(tail(train_d_ibm, -5) - pred_train_add_ibm))
+
+mape_train_add_ibm <- mean(abs((tail(train_d_ibm, -5) - pred_train_add_ibm) / tail(train_d_ibm, -5))) * 100
+```
+
+```{r}
+test<-c(train_add_ibm[291:295],test_add_ibm)
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_add_ibm),
+  sequence_length = 5,
+)
+pred_test_add_ibm<-model%>%predict(test_dataset)
+pred_test_add_ibm<-denormalize(pred_test_add_ibm,min(test),max(test))
+pred_test_add_ibm<-pred_test_add_ibm+forecasts_ibm
+
+mse_add_test_ibm<-mean((test_d_ibm-pred_test_add_ibm)^2)
+
+mae_add_test_ibm <- mean(abs(test_d_ibm - pred_test_add_ibm))
+
+mape_add_test_ibm<- mean(abs((test_d_ibm - pred_test_add_ibm) / test_d_ibm)) * 100
+
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(pred_test_add_ibm))))
+lines(data.frame(pred_test_add_ibm),lty=2,col='red',)
+```
+
+# Sunspot
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_add_sunspot),
+    targets = tail(normalize(train_add_sunspot),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_add_sunspot<-model %>% predict(train_dataset)
+pred_train_add_sunspot<-denormalize(pred_train_add_sunspot,min(train_add_sunspot),max(train_add_sunspot))
+pred_train_add_sunspot<-predictions_arima_sunspot[6:231]+pred_train_add_sunspot
+
+## Caculs metrics
+
+mse_train_add_sunspot<-mean((tail(train_d_sunspot,-5)-pred_train_add_sunspot)^2)
+
+mae_train_add_sunspot <- mean(abs(tail(train_d_sunspot, -5) - pred_train_add_sunspot))
+
+mape_train_add_sunspot <- mean(abs((tail(train_d_sunspot, -5) - pred_train_add_sunspot) / tail(train_d_sunspot, -5))) * 100
+```
+
+```{r}
+test<-c(train_add_sunspot[227:231],test_add_sunspot)
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_add_sunspot),
+  sequence_length = 5,
+)
+pred_test_add_sunspot<-model%>%predict(test_dataset)
+pred_test_add_sunspot<-denormalize(pred_test_add_sunspot,min(test),max(test))
+pred_test_add_sunspot<-pred_test_add_sunspot+forecasts_sunspot
+
+mse_add_test_sunspot<-mean((test_d_sunspot-pred_test_add_sunspot)^2)
+
+mae_add_test_sunspot <- mean(abs(test_d_sunspot - pred_test_add_sunspot))
+
+mape_add_test_sunspot<- mean(abs((test_d_sunspot- pred_test_add_sunspot) / test_d_sunspot)) * 100
+
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(pred_test_add_sunspot))))
+lines(data.frame(pred_test_add_sunspot),lty=2,col='red',)
+```
+
+## Multiplicatif model
+
+```{r}
+# preparation
+
+train_multi_lynx<-train_d_lynx/predictions_arima_lynx
+test_multi_lynx<-test_d_lynx/forecasts_lynx
+
+train_multi_ibm<-train_d_ibm/predictions_arima_ibm
+test_multi_ibm<-test_d_ibm/forecasts_ibm
+
+train_multi_sunspot<-train_d_sunspot/predictions_arima_sunspot
+test_multi_sunspot<-test_d_sunspot/forecasts_sunspot
+```
+
+# Lynx
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_multi_lynx),
+    targets = tail(normalize(train_multi_lynx),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_multi_lynx<-model %>% predict(train_dataset)
+pred_train_multi_lynx<-denormalize(pred_train_multi_lynx,min(train_multi_lynx),max(train_multi_lynx))
+pred_train_multi_lynx<-predictions_arima_lynx[6:91]*pred_train_multi_lynx
+
+## Caculs metrics
+
+mse_train_multi_lynx<-mean((tail(train_d_lynx,-5)-pred_train_multi_lynx)^2)
+
+mae_train_multi_lynx <- mean(abs(tail(train_d_lynx, -5) - pred_train_multi_lynx))
+
+mape_train_multi_lynx <- mean(abs((tail(train_d_lynx, -5) - pred_train_multi_lynx) / tail(train_d_lynx, -5))) * 100
+```
+
+```{r}
+test<-c(train_multi_lynx[87:91],test_multi_lynx)
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_multi_lynx),
+  sequence_length = 5,
+)
+pred_test_multi_lynx<-model%>%predict(test_dataset)
+pred_test_multi_lynx<-denormalize(pred_test_multi_lynx,min(test),max(test))
+pred_test_multi_lynx<-pred_test_multi_lynx*forecasts_lynx
+
+mse_multi_test_lynx<-mean((test_d_lynx-pred_test_multi_lynx)^2)
+
+mae_multi_test_lynx <- mean(abs(test_d_lynx - pred_test_multi_lynx))
+
+mape_multi_test_lynx <- mean(abs((test_d_lynx - pred_test_multi_lynx) / test_d_lynx)) * 100
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(pred_test_multi_lynx))))
+lines(data.frame(pred_test_multi_lynx),lty=2,col='red',)
+```
+
+# IBM
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_multi_ibm),
+    targets = tail(normalize(train_multi_ibm),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_multi_ibm<-model %>% predict(train_dataset)
+pred_train_multi_ibm<-denormalize(pred_train_multi_ibm,min(train_multi_ibm),max(train_multi_ibm))
+pred_train_multi_ibm<-predictions_arima_ibm[6:295]*pred_train_multi_ibm
+
+## Caculs metrics
+
+mse_train_multi_ibm<-mean((tail(train_d_ibm,-5)-pred_train_multi_ibm)^2)
+
+mae_train_multi_ibm <- mean(abs(tail(train_d_ibm, -5) - pred_train_multi_ibm))
+
+mape_train_multi_ibm <- mean(abs((tail(train_d_ibm, -5) - pred_train_multi_ibm) / tail(train_d_ibm, -5))) * 100
+```
+
+```{r}
+test<-c(train_multi_ibm[291:295],test_multi_ibm)
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_add_ibm),
+  sequence_length = 5,
+)
+pred_test_multi_ibm<-model%>%predict(test_dataset)
+pred_test_multi_ibm<-denormalize(pred_test_multi_ibm,min(test),max(test))
+pred_test_multi_ibm<-pred_test_multi_ibm*forecasts_ibm
+
+mse_multi_test_ibm<-mean((test_d_ibm-pred_test_multi_ibm)^2)
+
+mae_multi_test_ibm <- mean(abs(test_d_ibm - pred_test_multi_ibm))
+
+mape_add_test_ibm<- mean(abs((test_d_ibm - pred_test_multi_ibm) / test_d_ibm)) * 100
+
+plot.ts(test_d_ibm,ylim = range(c(test_d_ibm, data.frame(pred_test_multi_ibm))))
+lines(data.frame(pred_test_multi_ibm),lty=2,col='red',)
+```
+
+# Sunspot
+
+```{r}
+# préparer nos données 
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_multi_sunspot),
+    targets = tail(normalize(train_multi_sunspot),-5),
+    sequence_length = 5,
+  )
+
+
+```
+
+```{r}
+# Entraîner le modèle
+model <- create_model(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+      verbose = 0,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_multi_sunspot<-model %>% predict(train_dataset)
+pred_train_multi_sunspot<-denormalize(pred_train_multi_sunspot,min(train_multi_sunspot),max(train_multi_sunspot))
+pred_train_multi_sunspot<-predictions_arima_sunspot[6:231]*pred_train_multi_sunspot
+
+## Caculs metrics
+
+mse_train_multi_sunspot<-mean((tail(train_d_sunspot,-5)-pred_train_multi_sunspot)^2)
+
+mae_train_multi_sunspot <- mean(abs(tail(train_d_sunspot, -5) - pred_train_multi_sunspot))
+
+mape_train_multi_sunspot <- mean(abs((tail(train_d_sunspot, -5) - pred_train_multi_sunspot) / tail(train_d_sunspot, -5))) * 100
+```
+
+```{r}
+test<-c(train_multi_sunspot[227:231],test_multi_sunspot)
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_multi_sunspot),
+  sequence_length = 5,
+)
+pred_test_multi_sunspot<-model%>%predict(test_dataset)
+pred_test_multi_sunspot<-denormalize(pred_test_multi_sunspot,min(test),max(test))
+pred_test_multi_sunspot<-pred_test_multi_sunspot*forecasts_sunspot
+
+mse_multi_test_sunspot<-mean((test_d_sunspot-pred_test_multi_sunspot)^2)
+
+mae_multi_test_sunspot <- mean(abs(test_d_sunspot - pred_test_multi_sunspot))
+
+mape_multi_test_sunspot<- mean(abs((test_d_sunspot- pred_test_multi_sunspot) / test_d_sunspot)) * 100
+
+plot.ts(test_d_sunspot,ylim = range(c(test_d_sunspot, data.frame(pred_test_multi_sunspot))))
+lines(data.frame(pred_test_multi_sunspot),lty=2,col='red',)
+```
+
+### LSTM (not finish)
+
+# Prepare our model
+
+```{r}
+create_model <- function(input_nodes,hidden_nodes) {
+  inputs <- layer_input(shape = c(input_nodes, 1))
+  outputs <- inputs %>%
+    layer_flatten()%>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(hidden_nodes,activation ="tanh") %>%
+    layer_dense(1, activation='linear')
+  
+  model <- keras_model(inputs, outputs)
+  
+  model %>% compile(
+    optimizer = "sgd",
+    loss = "mse",
+  )
+  return(model)
+}
+
+```
+# Lynx
+
+```{r}
+# préparer nos données 
+
+create_sequences <- function(data, seq_length) {
+  sequences <- list()
+  for (i in 1:(length(data) - seq_length)) {
+    sequence <- data[i:(i + seq_length - 1)]
+    sequences[[i]] <- list(sequence)
+  }
+  return(sequences)
+}
+
+# Define sequence length
+seq_length <- 5
+
+normalized_data <- apply(data.frame(data_lynx), 2, normalize)
+
+sequences <- create_sequences(normalized_data, seq_length)
+
+# Define the train-test split ratio
+train_ratio <- 0.8
+
+# Determine the split index
+split_index <- round(train_ratio * length(sequences))
+
+# Split sequences into training and testing sets
+train_sequences <- sequences[1:split_index]
+test_sequences <- sequences[(split_index + 1):length(sequences)]
+
+# Convert training sequences to array
+x_train <- array(sapply(train_sequences, function(x) unlist(x)), dim = c(length(train_sequences), seq_length, ncol(data_lynx)))
+
+# Convert testing sequences to array
+x_test <- array(sapply(test_sequences, function(x) unlist(x)), dim = c(length(test_sequences), seq_length, ncol(data_lynx)))
+
+# Define function to prepare output data
+prepare_output <- function(data, seq_length) {
+  return(data[(seq_length + 1):length(data)])
+}
+
+# Prepare output for training
+y_train <- prepare_output(normalized_data, seq_length)[1:split_index]
+
+# Prepare output for testing
+y_test <- prepare_output(normalized_data, seq_length)[(split_index + 1):length(sequences)]
+
+# Convertir les données d'entrée en une matrice 3D pour les pas de temps
+x_train <- array_reshape(x_train, c(dim(x_train)[1], seq_length, 1))
+x_test <- array_reshape(x_test, c(dim(x_test)[1], seq_length, 1))
+
+```
+
+```{r}
+
+train_dataset <- timeseries_dataset_from_array(
+    data =  normalize(train_d_lynx),
+    targets = tail(normalize(train_d_lynx),-5),
+    sequence_length = 5,
+  )
+
+# Entraîner le modèle
+model <- create_model_LSTM(5, 10)
+    model %>% fit(
+      train_dataset,
+      epochs = 1000,
+      shuffle=FALSE,
+    )
+    
+## Prédictions des données d'entrainements 
+    
+pred_train_lstm_lynx<-model %>% predict(x_train)
+pred_train_lstm_lynx<-denormalize(pred_train_lstm_lynx,min(train_d_lynx),max(train_d_lynx))
+
+## Caculs metrics
+
+mse_train_lstm_lynx<-mean((tail(train_d_lynx,-5)-pred_train_lstm_lynx)^2)
+
+mae_train_lstm_lynx <- mean(abs(tail(train_d_lynx, -5) - pred_train_lstm_lynx))
+
+mape_train_lstm_lynx <- mean(abs((tail(train_d_lynx, -5) - pred_train_lstm_lynx) / tail(train_d_lynx, -5))) * 100
+```
+
+```{r}
+test<-data_lynx[87:114]
+test_dataset <- timeseries_dataset_from_array(
+  data = normalize(test),
+  targets = normalize(test_d_lynx),
+  sequence_length = 5,
+)
+test_lstm_lynx<-model%>%predict(test_dataset)
+test_lstm_lynx<-denormalize(test_lstm_lynx,min(test),max(test))
+
+mse_lstm_test_lynx<-mean((test_d_lynx-test_lstm_lynx)^2)
+
+mae_lstm_test_lynx <- mean(abs(test_d_lynx - test_lstm_lynx))
+
+mape_lstm_test_lynx <- mean(abs((test_d_lynx - test_lstm_lynx) / test_d_lynx)) * 100
+
+plot.ts(test_d_lynx,ylim = range(c(test_d_lynx, data.frame(test_lstm_lynx))))
+lines(data.frame(test_lstm_lynx),lty=2,col='red',)
+```
